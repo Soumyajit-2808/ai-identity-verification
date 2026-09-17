@@ -1,0 +1,22 @@
+# Python
+ai-service/venv/
+__pycache__/
+*.py[cod]
+
+# Node
+backend/node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Uploaded/generated files
+uploads/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

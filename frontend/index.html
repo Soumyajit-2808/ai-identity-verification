@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+		<title>VerifyID AI</title>
+
+		<style>
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				font-family: Inter, Arial, sans-serif;
+
+				background: linear-gradient(135deg, #eef4ff, #f8fafc);
+
+				color: #172033;
+			}
+
+			.navbar {
+				background: #0f172a;
+				color: white;
+				padding: 18px 7%;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+			}
+
+			.logo {
+				font-size: 22px;
+				font-weight: 800;
+			}
+
+			.badge {
+				background: #1e293b;
+				padding: 7px 12px;
+				border-radius: 20px;
+				font-size: 12px;
+			}
+
+			.container {
+				width: min(1100px, 92%);
+				margin: 40px auto;
+			}
+
+			.hero {
+				text-align: center;
+				margin-bottom: 30px;
+			}
+
+			.hero h1 {
+				font-size: 42px;
+				margin-bottom: 10px;
+			}
+
+			.hero p {
+				color: #64748b;
+				font-size: 17px;
+			}
+
+			.grid {
+				display: grid;
+				grid-template-columns:
+					minmax(300px, 1fr)
+					minmax(300px, 1fr);
+
+				gap: 24px;
+			}
+
+			.card {
+				background: white;
+				border-radius: 18px;
+				padding: 26px;
+
+				box-shadow: 0 12px 35px rgba(15, 23, 42, 0.08);
+			}
+
+			.card h2 {
+				margin-top: 0;
+			}
+
+			label {
+				display: block;
+				margin-top: 18px;
+				margin-bottom: 7px;
+				font-weight: 600;
+			}
+
+			input[type="text"],
+			input[type="number"],
+			input[type="file"] {
+				width: 100%;
+				padding: 12px;
+				border: 1px solid #cbd5e1;
+				border-radius: 10px;
+				background: white;
+			}
+
+			button {
+				width: 100%;
+				margin-top: 24px;
+				padding: 14px;
+
+				border: 0;
+				border-radius: 10px;
+
+				background: #2563eb;
+				color: white;
+
+				font-size: 16px;
+				font-weight: 700;
+
+				cursor: pointer;
+			}
+
+			button:hover {
+				background: #1d4ed8;
+			}
+
+			button:disabled {
+				background: #94a3b8;
+				cursor: wait;
+			}
+
+			.result {
+				display: none;
+			}
+
+			.decision {
+				font-size: 32px;
+				font-weight: 800;
+				margin: 10px 0;
+			}
+
+			.eligible {
+				color: #15803d;
+			}
+
+			.review {
+				color: #ca8a04;
+			}
+
+			.ineligible {
+				color: #dc2626;
+			}
+
+			.confidence {
+				font-size: 18px;
+				margin-bottom: 18px;
+			}
+
+			.reason {
+				background: #f1f5f9;
+				padding: 15px;
+				border-radius: 10px;
+				line-height: 1.5;
+			}
+
+			.identity {
+				margin-top: 20px;
+			}
+
+			.identity-row {
+				display: flex;
+				justify-content: space-between;
+				padding: 11px 0;
+				border-bottom: 1px solid #e2e8f0;
+			}
+
+			.identity-row span:first-child {
+				font-weight: 600;
+				color: #475569;
+			}
+
+			.checks {
+				margin-top: 20px;
+			}
+
+			.check {
+				display: flex;
+				justify-content: space-between;
+				padding: 10px 0;
+				border-bottom: 1px solid #e2e8f0;
+			}
+
+			.status-pass {
+				color: #15803d;
+				font-weight: 700;
+			}
+
+			.status-review {
+				color: #ca8a04;
+				font-weight: 700;
+			}
+
+			.status-fail {
+				color: #dc2626;
+				font-weight: 700;
+			}
+
+			.loading {
+				display: none;
+				text-align: center;
+				color: #64748b;
+				margin-top: 15px;
+			}
+
+			.footer {
+				text-align: center;
+				color: #64748b;
+				margin: 35px 0;
+				font-size: 13px;
+			}
+
+			@media (max-width: 750px) {
+				.grid {
+					grid-template-columns: 1fr;
+				}
+
+				.hero h1 {
+					font-size: 32px;
+				}
+			}
+		</style>
+	</head>
+
+	<body>
+		<nav class="navbar">
+			<div class="logo">VerifyID AI</div>
+
+			<div class="badge">AI Identity & Eligibility Verification</div>
+		</nav>
+
+		<main class="container">
+			<section class="hero">
+				<h1>Identity Verification</h1>
+
+				<p>
+					Automated document analysis, eligibility checking and
+					duplicate detection.
+				</p>
+			</section>
+
+			<div class="grid">
+				<!-- INPUT -->
+
+				<section class="card">
+					<h2>Verify Registration</h2>
+
+					<p>
+						Upload an identity document and provide the registration
+						details.
+					</p>
+
+					<form id="verificationForm">
+						<label> Registration Name </label>
+
+						<input
+							type="text"
+							id="registrationName"
+							placeholder="e.g. Rahul Sharma"
+							required
+						/>
+
+						<label> Identity Document </label>
+
+						<input
+							type="file"
+							id="document"
+							accept="image/png,image/jpeg,image/webp"
+							required
+						/>
+
+						<label> Minimum Age </label>
+
+						<input
+							type="number"
+							id="minAge"
+							value="18"
+							min="0"
+							max="150"
+						/>
+
+						<label> Maximum Age </label>
+
+						<input
+							type="number"
+							id="maxAge"
+							value="100"
+							min="0"
+							max="150"
+						/>
+
+						<button type="submit" id="verifyButton">
+							Verify Identity
+						</button>
+					</form>
+
+					<div class="loading" id="loading">
+						Processing document...
+					</div>
+				</section>
+
+				<!-- RESULT -->
+
+				<section class="card result" id="resultCard">
+					<h2>Verification Result</h2>
+
+					<div id="decision" class="decision"></div>
+
+					<div id="confidence" class="confidence"></div>
+
+					<div id="reason" class="reason"></div>
+
+					<div class="identity">
+						<h3>Extracted Identity</h3>
+
+						<div class="identity-row">
+							<span>Name</span>
+							<span id="name">—</span>
+						</div>
+
+						<div class="identity-row">
+							<span>Date of Birth</span>
+							<span id="dob">—</span>
+						</div>
+
+						<div class="identity-row">
+							<span>ID Number</span>
+							<span id="idNumber">—</span>
+						</div>
+					</div>
+
+					<div class="checks">
+						<h3>Verification Checks</h3>
+
+						<div class="check">
+							<span>OCR</span>
+							<span id="ocrStatus"></span>
+						</div>
+
+						<div class="check">
+							<span>Image Quality</span>
+							<span id="qualityStatus"></span>
+						</div>
+
+						<div class="check">
+							<span>Tamper Risk</span>
+							<span id="tamperStatus"></span>
+						</div>
+
+						<div class="check">
+							<span>Duplicate</span>
+							<span id="duplicateStatus"></span>
+						</div>
+
+						<div class="check">
+							<span>Identity Reuse</span>
+							<span id="identityDuplicateStatus"></span>
+						</div>
+
+						<div class="check">
+							<span>Eligibility</span>
+							<span id="eligibilityStatus"></span>
+						</div>
+
+						<div class="check">
+							<span>Name Match</span>
+							<span id="nameMatch"></span>
+						</div>
+					</div>
+				</section>
+			</div>
+
+			<section class="card" id="historyCard">
+				<h2>Verification History</h2>
+
+				<p>Recent verification decisions from this demo session.</p>
+
+				<div id="historyList">
+					<p style="color: #64748b">No verification attempts yet.</p>
+				</div>
+			</section>
+
+			<div class="footer">
+				VerifyID AI • Identity & Eligibility Verification Prototype
+			</div>
+		</main>
+
+		<script>
+			const form = document.getElementById("verificationForm");
+
+			const button = document.getElementById("verifyButton");
+
+			const loading = document.getElementById("loading");
+
+			const resultCard = document.getElementById("resultCard");
+
+			form.addEventListener("submit", async (event) => {
+				event.preventDefault();
+
+				const file = document.getElementById("document").files[0];
+
+				const registrationName =
+					document.getElementById("registrationName").value;
+
+				const minAge = document.getElementById("minAge").value;
+
+				const maxAge = document.getElementById("maxAge").value;
+
+				if (!file) {
+					alert("Please select a document.");
+					return;
+				}
+
+				const formData = new FormData();
+
+				formData.append("file", file);
+
+				formData.append("registration_name", registrationName);
+
+				formData.append("min_age", minAge);
+
+				formData.append("max_age", maxAge);
+
+				button.disabled = true;
+				button.textContent = "Verifying...";
+				loading.style.display = "block";
+
+				try {
+					const response = await fetch("/api/verify", {
+						method: "POST",
+						body: formData,
+					});
+
+					const data = await response.json();
+
+					if (!response.ok || !data.success) {
+						throw new Error(
+							data.error || data.detail || "Verification failed.",
+						);
+					}
+
+					showResult(data.verification);
+				} catch (error) {
+					alert(error.message);
+				} finally {
+					button.disabled = false;
+					button.textContent = "Verify Identity";
+					loading.style.display = "none";
+				}
+			});
+
+			function showResult(result) {
+				resultCard.style.display = "block";
+
+				const decision = document.getElementById("decision");
+
+				decision.textContent = result.decision;
+
+				decision.className =
+					"decision " + result.decision.toLowerCase();
+
+				document.getElementById("confidence").textContent =
+					`Confidence: ${Math.round(result.confidence * 100)}%`;
+
+				document.getElementById("reason").textContent = result.reason;
+
+				const identity = result.identity || {};
+
+				document.getElementById("name").textContent =
+					identity.name || "Not detected";
+
+				document.getElementById("dob").textContent =
+					identity.date_of_birth || "Not detected";
+
+				document.getElementById("idNumber").textContent =
+					identity.id_number || "Not detected";
+
+				const checks = result.checks || {};
+
+				setStatus("ocrStatus", checks.ocr);
+
+				setStatus("qualityStatus", checks.quality?.status);
+
+				setStatus(
+					"tamperStatus",
+					checks.tamper_risk?.risk || checks.tamper_risk?.status,
+				);
+
+				setStatus("duplicateStatus", checks.duplicate?.status);
+
+				setStatus(
+					"identityDuplicateStatus",
+					checks.identity_duplicate?.status,
+				);
+
+				setStatus("eligibilityStatus", checks.eligibility?.status);
+
+				let nameMatchValue = checks.name_match;
+
+				if (nameMatchValue === undefined || nameMatchValue === null) {
+					const registrationName = document
+						.getElementById("registrationName")
+						.value.trim();
+
+					const extractedName = identity.name || "";
+
+					nameMatchValue =
+						registrationName.toLowerCase() ===
+						extractedName.trim().toLowerCase();
+				}
+
+				if (
+					nameMatchValue === true ||
+					nameMatchValue === "true" ||
+					nameMatchValue === "matched"
+				) {
+					setStatus("nameMatch", "matched");
+				} else if (
+					nameMatchValue === false ||
+					nameMatchValue === "false" ||
+					nameMatchValue === "mismatch"
+				) {
+					setStatus("nameMatch", "mismatch");
+				} else {
+					setStatus("nameMatch", "not checked");
+				}
+				addToHistory(result);
+			}
+
+			function setStatus(elementId, value) {
+				const element = document.getElementById(elementId);
+
+				if (!value) {
+					element.textContent = "—";
+					return;
+				}
+
+				element.textContent = String(value).replaceAll("_", " ");
+
+				const normalized = String(value).toLowerCase();
+
+				element.className = "";
+
+				if (
+					normalized.includes("pass") ||
+					normalized.includes("matched") ||
+					normalized.includes("not_detected") ||
+					normalized === "low"
+				) {
+					element.classList.add("status-pass");
+				} else if (
+					normalized.includes("review") ||
+					normalized.includes("medium") ||
+					normalized.includes("detected")
+				) {
+					element.classList.add("status-review");
+				} else {
+					element.classList.add("status-fail");
+				}
+			}
+
+			let verificationHistory = [];
+
+			function addToHistory(result) {
+				verificationHistory.unshift({
+					decision: result.decision,
+					confidence: result.confidence,
+					name: result.identity?.name || "Unknown",
+					id: result.identity?.id_number || "Unknown",
+					time: new Date().toLocaleTimeString(),
+				});
+
+				if (verificationHistory.length > 5) {
+					verificationHistory.pop();
+				}
+
+				renderHistory();
+			}
+
+			function renderHistory() {
+				const historyList = document.getElementById("historyList");
+
+				if (verificationHistory.length === 0) {
+					historyList.innerHTML = `<p style="color:#64748b;">
+                No verification attempts yet.
+            </p>`;
+
+					return;
+				}
+
+				historyList.innerHTML = verificationHistory
+					.map((item) => {
+						let statusClass =
+							item.decision === "ELIGIBLE"
+								? "status-pass"
+								: item.decision === "REVIEW"
+									? "status-review"
+									: "status-fail";
+
+						return `
+                <div style="
+                    padding:14px 0;
+                    border-bottom:1px solid #e2e8f0;
+                ">
+
+                    <div style="
+                        display:flex;
+                        justify-content:space-between;
+                        align-items:center;
+                    ">
+
+                        <strong>
+                            ${escapeHtml(item.name)}
+                        </strong>
+
+                        <span class="${statusClass}">
+                            ${item.decision}
+                        </span>
+
+                    </div>
+
+                    <div style="
+                        color:#64748b;
+                        margin-top:5px;
+                        font-size:13px;
+                    ">
+                        ID: ${escapeHtml(item.id)}
+                        · Confidence:
+                        ${Math.round(item.confidence * 100)}%
+                        · ${item.time}
+                    </div>
+
+                </div>
+            `;
+					})
+					.join("");
+			}
+
+			function escapeHtml(value) {
+				return String(value)
+					.replaceAll("&", "&amp;")
+					.replaceAll("<", "&lt;")
+					.replaceAll(">", "&gt;")
+					.replaceAll('"', "&quot;")
+					.replaceAll("'", "&#039;");
+			}
+		</script>
+	</body>
+</html>
