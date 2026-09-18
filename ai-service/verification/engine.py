@@ -235,10 +235,11 @@ def check_image_quality(contents):
 
 def check_tamper_risk(contents):
     """
-    Lightweight heuristic tamper-risk check.
+    Conservative tamper-risk analysis.
 
-    This does NOT prove a document is fake.
-    It only identifies signals that may justify manual review.
+    This does NOT prove that a document is fake.
+    It combines several weak signals and routes suspicious
+    documents to manual review.
     """
 
     signals = []
@@ -246,55 +247,133 @@ def check_tamper_risk(contents):
     try:
         image = Image.open(__import__("io").BytesIO(contents))
 
-        # Metadata can sometimes contain editing software information.
+        # -------------------------------------------------
+        # 1. Metadata analysis
+        # -------------------------------------------------
+
         exif = image.getexif()
 
         if exif:
-            software_tags = []
+            editing_software = []
 
             for key, value in exif.items():
                 if isinstance(value, str):
+                    value_lower = value.lower()
+
                     if any(
-                        word in value.lower()
+                        word in value_lower
                         for word in [
                             "photoshop",
                             "gimp",
                             "illustrator",
-                            "paint",
                             "canva",
+                            "paint.net",
                         ]
                     ):
-                        software_tags.append(value)
+                        editing_software.append(value)
 
-            if software_tags:
-                signals.append("editing software metadata detected")
+            if editing_software:
+                signals.append(
+                    "editing software metadata detected"
+                )
+
+        # -------------------------------------------------
+        # 2. JPEG recompression / ELA-style signal
+        # -------------------------------------------------
+
+        if image.format == "JPEG":
+            import io
+
+            original = image.convert("RGB")
+
+            buffer = io.BytesIO()
+
+            original.save(
+                buffer,
+                format="JPEG",
+                quality=90
+            )
+
+            buffer.seek(0)
+
+            recompressed = Image.open(buffer).convert("RGB")
+
+            original_array = np.asarray(original).astype(np.int16)
+            recompressed_array = np.asarray(
+                recompressed
+            ).astype(np.int16)
+
+            difference = np.abs(
+                original_array - recompressed_array
+            )
+
+            ela_score = float(np.mean(difference))
+
+            if ela_score > 18:
+                signals.append(
+                    f"JPEG recompression anomaly detected (ELA score {ela_score:.2f})"
+                )
+
+        # -------------------------------------------------
+        # 3. Image structure sanity check
+        # -------------------------------------------------
+
+        width, height = image.size
+
+        if width < 700 or height < 400:
+            signals.append(
+                "document resolution is unusually low"
+            )
+
+        # Extremely unusual aspect ratios can indicate
+        # cropping or incomplete document capture.
+        aspect_ratio = width / height
+
+        if aspect_ratio < 0.5 or aspect_ratio > 3.5:
+            signals.append(
+                "unusual document aspect ratio detected"
+            )
 
     except Exception:
-        signals.append("document metadata could not be inspected")
+        signals.append(
+            "document structure could not be fully inspected"
+        )
+
+    # -----------------------------------------------------
+    # Risk decision
+    # -----------------------------------------------------
 
     if signals:
         return {
             "status": "review",
             "risk": "medium",
             "signals": signals,
-            "reason": "Potential tampering indicators were detected; manual review is recommended."
+            "reason": (
+                "Potential document manipulation or "
+                "structural anomalies were detected; "
+                "manual review is recommended."
+            )
         }
 
     return {
         "status": "passed",
         "risk": "low",
         "signals": [],
-        "reason": "No basic metadata-based tampering indicators were detected."
+        "reason": (
+            "No significant tampering-risk signals "
+            "were detected by the available checks."
+        )
     }
-
 
 def calculate_confidence(
     ocr_result,
     quality_result,
     tamper_result,
     duplicate_result,
+    identity_duplicate_result,
     eligibility_result,
-    name_match
+    name_match,
+    face_match_result
 ):
     score = 0.50
 
@@ -322,6 +401,11 @@ def calculate_confidence(
     else:
         score -= 0.25
 
+    if identity_duplicate_result.get("status") == "not_detected":
+        score += 0.05
+    elif identity_duplicate_result.get("status") == "detected":
+        score -= 0.25
+
     if eligibility_result.get("status") == "passed":
         score += 0.05
     elif eligibility_result.get("status") == "failed":
@@ -331,6 +415,11 @@ def calculate_confidence(
         score += 0.05
     elif name_match is False:
         score -= 0.15
+
+    if face_match_result.get("status") == "passed":
+        score += 0.05
+    elif face_match_result.get("status") == "review":
+        score -= 0.20
 
     return round(max(0.0, min(0.99, score)), 2)
 
@@ -342,7 +431,8 @@ def determine_decision(
     identity_duplicate_result,
     eligibility_result,
     ocr_result,
-    name_match
+    name_match,
+    face_match_result
 ):
     fields = ocr_result.get("fields", {})
 
@@ -370,15 +460,21 @@ def determine_decision(
     if name_match is False:
         return "REVIEW"
 
+    if face_match_result.get("status") == "review":
+        return "REVIEW"
+
     return "ELIGIBLE"
+
 
 def build_reason(
     decision,
     quality_result,
     tamper_result,
     duplicate_result,
+    identity_duplicate_result,
     eligibility_result,
-    name_match
+    name_match,
+    face_match_result
 ):
     reasons = []
 
@@ -391,6 +487,9 @@ def build_reason(
         if duplicate_result.get("status") == "not_detected":
             reasons.append("no identical duplicate was detected")
 
+        if identity_duplicate_result.get("status") == "not_detected":
+            reasons.append("no identity reuse was detected")
+
         if tamper_result.get("risk") == "low":
             reasons.append("no basic tampering indicators were detected")
 
@@ -400,6 +499,11 @@ def build_reason(
         if name_match is True:
             reasons.append("registration name matches the extracted name")
 
+        if face_match_result.get("status") == "passed":
+            reasons.append("selfie face matches the identity document")
+        elif face_match_result.get("status") == "not_provided":
+            reasons.append("face verification was skipped because no selfie was provided")
+
         return "Automated verification passed because " + ", ".join(reasons) + "."
 
     if decision == "INELIGIBLE":
@@ -408,28 +512,50 @@ def build_reason(
             "The registration did not satisfy the configured eligibility rules."
         )
 
+    # REVIEW reasons are collected together so important signals
+    # such as face mismatch are not hidden by duplicate detection.
     if duplicate_result.get("status") == "detected":
-        return "The document matches a previously submitted file and requires manual review."
+        reasons.append("the document matches a previously submitted file")
+
+    if identity_duplicate_result.get("status") == "detected":
+        reasons.append("the extracted identity has already been associated with a previous submission")
 
     if quality_result.get("status") == "failed":
-        return "The document image quality is insufficient for reliable automated verification."
+        reasons.append("document image quality is insufficient")
 
     if tamper_result.get("risk") == "medium":
-        return "Potential document-tampering indicators were detected; manual review is recommended."
+        reasons.append("potential document-tampering indicators were detected")
 
     if name_match is False:
-        return "The registration name does not sufficiently match the extracted document name."
+        reasons.append("registration name does not sufficiently match the extracted document name")
+
+    if face_match_result.get("status") == "review":
+        reasons.append("selfie face does not sufficiently match the identity document")
+
+    if reasons:
+        return (
+            "Manual review is required because "
+            + ", ".join(reasons)
+            + "."
+        )
 
     return "The system could not establish sufficient confidence for automatic approval; manual review is recommended."
-
-
 def verify_document(
     contents,
     ocr_result,
     registration_name=None,
     min_age=18,
-    max_age=100
+    max_age=100,
+    face_match_result=None
 ):
+    if face_match_result is None:
+        face_match_result = {
+            "status": "not_provided",
+            "match": None,
+            "similarity": None,
+            "reason": "Selfie was not provided; face verification was skipped."
+        }
+
     quality_result = check_image_quality(contents)
 
     tamper_result = check_tamper_risk(contents)
@@ -454,22 +580,25 @@ def verify_document(
     )
 
     decision = determine_decision(
-    quality_result,
-    tamper_result,
-    duplicate_result,
-    identity_duplicate_result,
-    eligibility_result,
-    ocr_result,
-    name_match
-)
+        quality_result,
+        tamper_result,
+        duplicate_result,
+        identity_duplicate_result,
+        eligibility_result,
+        ocr_result,
+        name_match,
+        face_match_result
+    )
 
     confidence = calculate_confidence(
         ocr_result,
         quality_result,
         tamper_result,
         duplicate_result,
+        identity_duplicate_result,
         eligibility_result,
-        name_match
+        name_match,
+        face_match_result
     )
 
     reason = build_reason(
@@ -477,8 +606,10 @@ def verify_document(
         quality_result,
         tamper_result,
         duplicate_result,
+        identity_duplicate_result,
         eligibility_result,
-        name_match
+        name_match,
+        face_match_result
     )
 
     return {
@@ -499,6 +630,7 @@ def verify_document(
             "duplicate": duplicate_result,
             "identity_duplicate": identity_duplicate_result,
             "eligibility": eligibility_result,
-            "name_match": name_match
+            "name_match": name_match,
+            "face_match": face_match_result
         }
     }

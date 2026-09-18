@@ -4,6 +4,7 @@ from io import BytesIO
 
 from ocr.extractor import process_document
 from verification.engine import verify_document
+from verification.face import compare_faces
 
 
 app = FastAPI(
@@ -46,7 +47,10 @@ async def ocr_document(file: UploadFile = File(...)):
 
         image = Image.open(BytesIO(contents))
 
-        result = process_document(image)
+        result = process_document(
+            image,
+            contents=contents
+        )
 
         return {
             "success": True,
@@ -59,9 +63,12 @@ async def ocr_document(file: UploadFile = File(...)):
             status_code=500,
             detail=f"OCR processing failed: {str(error)}"
         )
+
+
 @app.post("/api/verify")
 async def verify_identity(
     file: UploadFile = File(...),
+    selfie: UploadFile = File(None),
     registration_name: str = "",
     min_age: int = 18,
     max_age: int = 100
@@ -84,18 +91,42 @@ async def verify_identity(
         )
 
     try:
+        # Read identity document
         contents = await file.read()
 
         image = Image.open(BytesIO(contents))
 
-        ocr_result = process_document(image)
+        # OCR
+        ocr_result = process_document(
+            image,
+            contents=contents
+        )
 
+        # Face verification MUST happen before the verification engine
+        # calculates the final decision and confidence.
+        if selfie:
+            selfie_contents = await selfie.read()
+
+            face_result = compare_faces(
+                contents,
+                selfie_contents
+            )
+        else:
+            face_result = {
+                "status": "not_provided",
+                "match": None,
+                "similarity": None,
+                "reason": "Selfie was not provided; face verification was skipped."
+            }
+
+        # Complete verification
         verification_result = verify_document(
-            contents=contents,
-            ocr_result=ocr_result,
-            registration_name=registration_name or None,
-            min_age=min_age,
-            max_age=max_age
+            contents,
+            ocr_result,
+            registration_name,
+            min_age,
+            max_age,
+            face_match_result=face_result
         )
 
         return {

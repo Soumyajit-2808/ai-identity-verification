@@ -2,6 +2,8 @@ import re
 from PIL import Image, ImageEnhance, ImageFilter
 import pytesseract
 
+from ocr.textract import extract_with_textract
+
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
@@ -125,27 +127,90 @@ def extract_name(text: str):
 
     return None
 
+def extract_id_type(text: str):
+    upper = text.upper()
+
+    if "AADHAAR" in upper or "UIDAI" in upper:
+        return "AADHAAR"
+
+    if "PAN" in upper:
+        return "PAN"
+
+    if "PASSPORT" in upper:
+        return "PASSPORT"
+
+    if "DRIVING LICENCE" in upper or "DRIVING LICENSE" in upper:
+        return "DRIVING_LICENSE"
+
+    if "VOTER" in upper or "ELECTION COMMISSION" in upper:
+        return "VOTER_ID"
+
+    if "STUDENT" in upper or "COLLEGE" in upper or "UNIVERSITY" in upper:
+        return "STUDENT_ID"
+
+    return "UNKNOWN"
+
+
+def extract_institution(text: str):
+    lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    ]
+
+    keywords = [
+        "COLLEGE",
+        "UNIVERSITY",
+        "INSTITUTE",
+        "SCHOOL",
+    ]
+
+    for line in lines:
+        upper = line.upper()
+
+        if any(keyword in upper for keyword in keywords):
+            return line
+
+    return None
 
 def extract_identity_fields(text: str):
-    """
-    Convert raw OCR text into a basic structured representation.
-    """
     return {
         "name": extract_name(text),
         "date_of_birth": extract_dob(text),
         "id_number": extract_id_number(text),
+        "id_type": extract_id_type(text),
+        "institution": extract_institution(text),
     }
 
 
-def process_document(image: Image.Image):
+def process_document(image: Image.Image, contents=None):
     """
     Complete OCR pipeline.
+
+    AWS Textract is used when configured.
+    Tesseract is used as the local development fallback.
     """
-    raw_text = extract_text(image)
+
+    raw_text = None
+    ocr_engine = "tesseract"
+
+    if contents:
+        try:
+            raw_text = extract_with_textract(contents)
+
+            if raw_text:
+                ocr_engine = "aws_textract"
+        except Exception:
+            raw_text = None
+
+    if not raw_text:
+        raw_text = extract_text(image)
+        ocr_engine = "tesseract"
 
     fields = extract_identity_fields(raw_text)
 
     return {
         "raw_text": raw_text,
+        "engine": ocr_engine,
         "fields": fields,
     }

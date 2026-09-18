@@ -2,9 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
 		<title>VerifyID AI</title>
 
 		<style>
@@ -15,9 +13,7 @@
 			body {
 				margin: 0;
 				font-family: Inter, Arial, sans-serif;
-
 				background: linear-gradient(135deg, #eef4ff, #f8fafc);
-
 				color: #172033;
 			}
 
@@ -67,7 +63,6 @@
 				grid-template-columns:
 					minmax(300px, 1fr)
 					minmax(300px, 1fr);
-
 				gap: 24px;
 			}
 
@@ -75,7 +70,6 @@
 				background: white;
 				border-radius: 18px;
 				padding: 26px;
-
 				box-shadow: 0 12px 35px rgba(15, 23, 42, 0.08);
 			}
 
@@ -104,16 +98,12 @@
 				width: 100%;
 				margin-top: 24px;
 				padding: 14px;
-
 				border: 0;
 				border-radius: 10px;
-
 				background: #2563eb;
 				color: white;
-
 				font-size: 16px;
 				font-weight: 700;
-
 				cursor: pointer;
 			}
 
@@ -167,6 +157,7 @@
 			.identity-row {
 				display: flex;
 				justify-content: space-between;
+				gap: 20px;
 				padding: 11px 0;
 				border-bottom: 1px solid #e2e8f0;
 			}
@@ -176,6 +167,11 @@
 				color: #475569;
 			}
 
+			.identity-row span:last-child {
+				text-align: right;
+				word-break: break-word;
+			}
+
 			.checks {
 				margin-top: 20px;
 			}
@@ -183,8 +179,13 @@
 			.check {
 				display: flex;
 				justify-content: space-between;
+				gap: 20px;
 				padding: 10px 0;
 				border-bottom: 1px solid #e2e8f0;
+			}
+
+			.check span:last-child {
+				text-align: right;
 			}
 
 			.status-pass {
@@ -231,33 +232,30 @@
 	<body>
 		<nav class="navbar">
 			<div class="logo">VerifyID AI</div>
-
 			<div class="badge">AI Identity & Eligibility Verification</div>
 		</nav>
 
 		<main class="container">
 			<section class="hero">
 				<h1>Identity Verification</h1>
-
 				<p>
-					Automated document analysis, eligibility checking and
-					duplicate detection.
+					Automated document analysis, eligibility checking, duplicate
+					detection and face verification.
 				</p>
 			</section>
 
 			<div class="grid">
 				<!-- INPUT -->
-
 				<section class="card">
 					<h2>Verify Registration</h2>
 
 					<p>
-						Upload an identity document and provide the registration
-						details.
+						Upload an identity document and optionally provide a
+						selfie for face matching.
 					</p>
 
 					<form id="verificationForm">
-						<label> Registration Name </label>
+						<label>Registration Name</label>
 
 						<input
 							type="text"
@@ -266,7 +264,7 @@
 							required
 						/>
 
-						<label> Identity Document </label>
+						<label>Identity Document</label>
 
 						<input
 							type="file"
@@ -275,7 +273,20 @@
 							required
 						/>
 
-						<label> Minimum Age </label>
+						<label
+							>Selfie
+							<span style="font-weight: 400; color: #64748b"
+								>(optional)</span
+							></label
+						>
+
+						<input
+							type="file"
+							id="selfie"
+							accept="image/png,image/jpeg,image/webp"
+						/>
+
+						<label>Minimum Age</label>
 
 						<input
 							type="number"
@@ -285,7 +296,7 @@
 							max="150"
 						/>
 
-						<label> Maximum Age </label>
+						<label>Maximum Age</label>
 
 						<input
 							type="number"
@@ -301,12 +312,11 @@
 					</form>
 
 					<div class="loading" id="loading">
-						Processing document...
+						Processing document and verification signals...
 					</div>
 				</section>
 
 				<!-- RESULT -->
-
 				<section class="card result" id="resultCard">
 					<h2>Verification Result</h2>
 
@@ -332,6 +342,16 @@
 						<div class="identity-row">
 							<span>ID Number</span>
 							<span id="idNumber">—</span>
+						</div>
+
+						<div class="identity-row">
+							<span>ID Type</span>
+							<span id="idType">—</span>
+						</div>
+
+						<div class="identity-row">
+							<span>Institution</span>
+							<span id="institution">—</span>
 						</div>
 					</div>
 
@@ -372,6 +392,11 @@
 							<span>Name Match</span>
 							<span id="nameMatch"></span>
 						</div>
+
+						<div class="check">
+							<span>Face Match</span>
+							<span id="faceMatch"></span>
+						</div>
 					</div>
 				</section>
 			</div>
@@ -393,17 +418,16 @@
 
 		<script>
 			const form = document.getElementById("verificationForm");
-
 			const button = document.getElementById("verifyButton");
-
 			const loading = document.getElementById("loading");
-
 			const resultCard = document.getElementById("resultCard");
 
 			form.addEventListener("submit", async (event) => {
 				event.preventDefault();
 
 				const file = document.getElementById("document").files[0];
+
+				const selfie = document.getElementById("selfie").files[0];
 
 				const registrationName =
 					document.getElementById("registrationName").value;
@@ -420,12 +444,13 @@
 				const formData = new FormData();
 
 				formData.append("file", file);
-
 				formData.append("registration_name", registrationName);
-
 				formData.append("min_age", minAge);
-
 				formData.append("max_age", maxAge);
+
+				if (selfie) {
+					formData.append("selfie", selfie);
+				}
 
 				button.disabled = true;
 				button.textContent = "Verifying...";
@@ -481,6 +506,12 @@
 				document.getElementById("idNumber").textContent =
 					identity.id_number || "Not detected";
 
+				document.getElementById("idType").textContent =
+					identity.id_type || "Not detected";
+
+				document.getElementById("institution").textContent =
+					identity.institution || "Not detected";
+
 				const checks = result.checks || {};
 
 				setStatus("ocrStatus", checks.ocr);
@@ -530,6 +561,19 @@
 				} else {
 					setStatus("nameMatch", "not checked");
 				}
+
+				const faceMatch = checks.face_match || {};
+
+				if (faceMatch.status === "passed") {
+					setStatus("faceMatch", "passed");
+				} else if (faceMatch.status === "review") {
+					setStatus("faceMatch", "review");
+				} else if (faceMatch.status === "not_provided") {
+					setStatus("faceMatch", "not provided");
+				} else {
+					setStatus("faceMatch", "not checked");
+				}
+
 				addToHistory(result);
 			}
 
@@ -588,8 +632,8 @@
 
 				if (verificationHistory.length === 0) {
 					historyList.innerHTML = `<p style="color:#64748b;">
-                No verification attempts yet.
-            </p>`;
+                        No verification attempts yet.
+                    </p>`;
 
 					return;
 				}
@@ -604,40 +648,40 @@
 									: "status-fail";
 
 						return `
-                <div style="
-                    padding:14px 0;
-                    border-bottom:1px solid #e2e8f0;
-                ">
+                            <div style="
+                                padding:14px 0;
+                                border-bottom:1px solid #e2e8f0;
+                            ">
 
-                    <div style="
-                        display:flex;
-                        justify-content:space-between;
-                        align-items:center;
-                    ">
+                                <div style="
+                                    display:flex;
+                                    justify-content:space-between;
+                                    align-items:center;
+                                ">
 
-                        <strong>
-                            ${escapeHtml(item.name)}
-                        </strong>
+                                    <strong>
+                                        ${escapeHtml(item.name)}
+                                    </strong>
 
-                        <span class="${statusClass}">
-                            ${item.decision}
-                        </span>
+                                    <span class="${statusClass}">
+                                        ${item.decision}
+                                    </span>
 
-                    </div>
+                                </div>
 
-                    <div style="
-                        color:#64748b;
-                        margin-top:5px;
-                        font-size:13px;
-                    ">
-                        ID: ${escapeHtml(item.id)}
-                        · Confidence:
-                        ${Math.round(item.confidence * 100)}%
-                        · ${item.time}
-                    </div>
+                                <div style="
+                                    color:#64748b;
+                                    margin-top:5px;
+                                    font-size:13px;
+                                ">
+                                    ID: ${escapeHtml(item.id)}
+                                    · Confidence:
+                                    ${Math.round(item.confidence * 100)}%
+                                    · ${item.time}
+                                </div>
 
-                </div>
-            `;
+                            </div>
+                        `;
 					})
 					.join("");
 			}
