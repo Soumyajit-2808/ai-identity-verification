@@ -1,316 +1,515 @@
-# VerifyID AI
+# AI-Powered Identity & Eligibility Verification
 
-AI-powered identity and eligibility verification for hackathon registrations.
+An AI-powered identity and eligibility verification prototype built for the **Hackingly Platform Track (PS-003)** at the AI Build Challenge, Bengaluru.
+
+The system extends an OCR-based identity verification workflow with additional checks for eligibility, identity consistency, duplicate/reused documents, image quality, tamper-risk indicators, and optional face verification.
+
+---
 
 ## Problem
 
-Hackathon registration systems can extract information such as date of birth from identity documents, but OCR alone cannot determine whether a submission should be automatically accepted.
+Hackathon registration systems often require participants to provide proof of identity or eligibility such as:
 
-**VerifyID AI** adds a verification layer around document processing to evaluate identity, eligibility, document quality, duplicate submissions, and registration consistency.
+- College IDs
+- Government IDs
+- Aadhaar cards
+- PAN cards
+- Other identity documents
 
-The system provides an automated decision together with a confidence value and a human-readable explanation, while routing suspicious or uncertain cases for manual review.
+OCR can extract information such as a participant's date of birth, but extraction alone does not answer important verification questions:
+
+- Does the registration name match the identity document?
+- Is the same ID being reused under another name?
+- Is the uploaded document suspicious or potentially tampered with?
+- Is the document image too poor to verify reliably?
+- Does the participant's selfie match the photograph on the ID?
+- Is the participant eligible for the event?
+
+This project adds a verification layer on top of the existing OCR workflow.
+
+---
+
+## Solution
+
+The system combines multiple verification signals instead of relying on OCR alone.
+
+```text
+                    Identity Document
+                           │
+                           ▼
+                 Existing OCR Pipeline
+                  (AWS Textract)
+                           │
+                           ▼
+                  Extracted ID Fields
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+         Eligibility   Identity      Document
+           Checks       Checks         Checks
+                            │
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+          Name Match     Duplicate     Tamper Risk
+                         / ID Reuse
+              │
+              ▼
+       Optional Selfie Input
+              │
+              ▼
+          Face Matching
+              │
+              ▼
+       Verification Engine
+              │
+              ▼
+     ┌───────────────────────┐
+     │ ELIGIBLE              │
+     │ INELIGIBLE            │
+     │ REVIEW                │
+     └───────────────────────┘
+              │
+              ▼
+       Confidence + Reason
+```
+
+The prototype is designed so that the OCR component can be replaced or connected to Hackingly's existing AWS Textract pipeline with minimal changes.
+
+---
 
 ## Key Features
 
-- Identity document upload
-- OCR-based text extraction
-- Structured identity field extraction
-- Image quality assessment
-- Basic document tamper-risk detection
-- Exact duplicate document detection
-- Identity/ID-number reuse detection
-- Age-based eligibility verification
-- Registration-name matching
-- Automated verification decision
-- Confidence score
-- Human-readable verification reason
-- Verification history for the current demo session
-- Browser-based demonstration interface
-- FastAPI Swagger API for testing
+### 1. OCR-Based Identity Extraction
 
-## Verification Decisions
-
-The system produces one of three decisions:
-
-| Decision | Meaning |
-|---|---|
-| `ELIGIBLE` | Available automated checks passed |
-| `REVIEW` | One or more checks require human verification |
-| `INELIGIBLE` | Configured eligibility requirement was not satisfied |
-
-The system is designed to route uncertain cases to **REVIEW** rather than automatically approving them.
-
-## Architecture
-
-```text
-                         VERIFYID AI
-                              |
-                              v
-                     ┌─────────────────┐
-                     │   Browser UI    │
-                     │ HTML/CSS/JS     │
-                     └────────┬────────┘
-                              |
-                              v
-                     ┌─────────────────┐
-                     │ Node.js         │
-                     │ Express Backend │
-                     └────────┬────────┘
-                              |
-                              v
-                  ┌────────────────────────┐
-                  │ Python FastAPI Service │
-                  └────────────┬───────────┘
-                               |
-              ┌────────────────┼────────────────┐
-              |                |                |
-              v                v                v
-        ┌───────────┐   ┌─────────────┐   ┌──────────────┐
-        │    OCR    │   │    Image    │   │ Verification │
-        │ Tesseract │   │   Analysis  │   │    Engine    │
-        └─────┬─────┘   └──────┬──────┘   └──────┬───────┘
-              |                |                 |
-              |          ┌─────┴─────┐           |
-              |          |           |           |
-              |       Quality     Tamper         |
-              |        Check       Risk          |
-              |          |           |           |
-              └──────────┴───────────┴───────────┘
-                               |
-                               v
-                    ┌────────────────────┐
-                    │ Verification       │
-                    │ Decision Engine    │
-                    └─────────┬──────────┘
-                              |
-                ┌─────────────┼─────────────┐
-                |             |             |
-                v             v             v
-            ELIGIBLE        REVIEW      INELIGIBLE
-                |             |             |
-                └─────────────┼─────────────┘
-                              |
-                              v
-                 Confidence + Explanation
-```
-
-## Verification Pipeline
-
-```text
-Document Upload
-       |
-       v
-      OCR
-       |
-       v
-Identity Field Extraction
-       |
-       +-------------------------+
-       |                         |
-       v                         v
-Image Quality              Tamper-Risk
-Assessment                  Analysis
-       |                         |
-       +------------+------------+
-                    |
-                    v
-             Duplicate Check
-                    |
-                    v
-            Identity Reuse Check
-                    |
-                    v
-             Age Eligibility
-                    |
-                    v
-            Registration Name
-                Matching
-                    |
-                    v
-          Verification Engine
-                    |
-                    v
-        Decision + Confidence
-                    |
-                    v
-        Human-readable Reason
-```
-
-## Identity Fields
-
-The current prototype attempts to extract:
+The verification workflow works with OCR-extracted identity information including:
 
 - Name
 - Date of birth
 - ID number
+- ID type
+- Institution
 
-The extracted information is then used by the verification engine for eligibility and duplicate/reuse checks.
+The current prototype includes a local OCR fallback for standalone demonstration.
 
-## Verification Checks
+In the intended Hackingly integration, the existing **AWS Textract-based OCR pipeline** is treated as the upstream OCR source.
 
-### 1. OCR
+---
 
-The uploaded document is processed using Tesseract OCR.
+### 2. Age Eligibility Verification
 
-The OCR output is converted into structured fields where possible.
-
-Example:
-
-```json
-{
-  "name": "Rahul Sharma",
-  "date_of_birth": "15/08/2004",
-  "id_number": "STU1234567"
-}
-```
-
-### 2. Image Quality
-
-The prototype evaluates basic image properties such as:
-
-- Image dimensions
-- Blur score
-- Brightness
-
-Poor-quality documents can be routed for manual review instead of being blindly accepted.
-
-### 3. Tamper Risk
-
-The prototype performs basic tamper-risk checks.
-
-The result is treated as a **risk signal**, not definitive proof that a document is genuine or fraudulent.
+The system calculates age from the extracted date of birth and checks it against configurable eligibility limits.
 
 Example:
 
 ```text
-risk: low
+Minimum age: 18
+Maximum age: 100
+
+DOB: 15/08/2004
+Result: Eligible
 ```
 
-Higher-risk results can be routed for manual review.
+The minimum and maximum age can be supplied as part of the verification request.
 
-### 4. Exact Duplicate Detection
+---
 
-The uploaded file is hashed and compared with previously submitted files during the current service session.
+### 3. Registration Name Matching
+
+The participant's registration name is compared with the name extracted from the identity document.
+
+Example:
 
 ```text
-First submission
-      |
-      v
-Hash stored
-      |
-      v
-Second identical submission
-      |
-      v
-Duplicate detected
-      |
-      v
-REVIEW
+Registration:
+Rahul Sharma
+
+ID:
+Rahul Sharma
+
+Result:
+Name Match
 ```
+
+A significant mismatch results in a `REVIEW` decision rather than automatic approval.
+
+---
+
+### 4. Duplicate Document Detection
+
+The system generates a SHA-256 hash of the uploaded document.
+
+This allows the prototype to identify an identical document being submitted more than once during the running session.
+
+```text
+Document A
+    │
+    ▼
+SHA-256 Hash
+    │
+    ▼
+Previously Seen?
+   / \
+ Yes  No
+  │    │
+REVIEW Continue
+```
+
+---
 
 ### 5. Identity Reuse Detection
 
-The system also checks the extracted ID number separately from the file hash.
+The system also tracks extracted identity information such as the ID number.
 
-This allows the prototype to detect a situation where the same identity information is submitted using a different image file.
+This helps identify scenarios where the same identity document is submitted using different registration names.
+
+Example:
 
 ```text
-Image A
-   |
-   v
+Registration 1
 ID: STU1234567
-   |
-   v
-Stored identity
+Name: Rahul Sharma
 
-Image B
-   |
-   v
+Registration 2
 ID: STU1234567
-   |
-   v
-Identity reuse detected
-   |
-   v
+Name: Amit Kumar
+
+Result:
+Identity Reuse → REVIEW
+```
+
+The current prototype stores this registry in memory for demonstration purposes.
+
+For production deployment, the identity registry would be persisted in the registration database.
+
+---
+
+### 6. Image Quality Analysis
+
+Uploaded documents are checked for basic image-quality issues such as:
+
+- Resolution
+- Brightness
+- Blur
+
+Low-quality images can be routed to manual review instead of being automatically accepted.
+
+---
+
+### 7. Tamper-Risk Analysis
+
+The prototype performs conservative checks for potential tampering indicators, including:
+
+- Suspicious metadata
+- JPEG recompression characteristics
+- ELA-style image analysis
+- Low resolution
+- Unusual image characteristics
+
+The result is treated as a **tamper-risk indicator**, not as definitive forensic proof that a document is fake.
+
+Suspicious cases are routed to manual review.
+
+---
+
+### 8. Face Verification
+
+When a selfie is provided, the system compares the face detected in the identity document with the selfie.
+
+The prototype uses:
+
+- DeepFace
+- FaceNet512
+- OpenCV face detection
+
+Example:
+
+```text
+Identity Document Face
+          │
+          ▼
+      Face Embedding
+          │
+          │ Compare
+          ▼
+      Selfie Face
+          │
+          ▼
+      Face Match
+```
+
+Possible outcomes include:
+
+```text
+PASSED
 REVIEW
+NOT_PROVIDED
 ```
 
-### 6. Age Eligibility
+If no selfie is supplied, face verification is skipped.
 
-The registration flow provides configurable minimum and maximum ages.
+---
+
+## Verification Decision Model
+
+The verification engine combines the available signals into a final result.
+
+### ELIGIBLE
+
+Returned when the available checks support automatic approval.
 
 Example:
-
-```text
-Minimum Age: 18
-Maximum Age: 100
-```
-
-The extracted date of birth is used to calculate the applicant's age and determine whether the configured eligibility range is satisfied.
-
-### 7. Registration Name Matching
-
-The name entered during registration is compared with the name extracted from the identity document.
-
-Example:
-
-```text
-Registration Name: Rahul Sharma
-Document Name:     Rahul Sharma
-                         |
-                         v
-                      MATCHED
-```
-
-If the names do not match, the submission can be routed for manual review.
-
-## Example Verification Response
 
 ```json
 {
-  "success": true,
-  "verification": {
-    "decision": "ELIGIBLE",
-    "confidence": 0.99,
-    "reason": "Automated verification passed because identity fields were successfully extracted, image quality passed, no identical duplicate was detected, no basic tampering indicators were detected, age eligibility check passed, registration name matches the extracted name.",
-    "identity": {
-      "name": "Rahul Sharma",
-      "date_of_birth": "15/08/2004",
-      "id_number": "STU1234567"
-    },
-    "checks": {
-      "ocr": "passed",
-      "quality": {
-        "status": "passed"
-      },
-      "tamper_risk": {
-        "status": "passed",
-        "risk": "low"
-      },
-      "duplicate": {
-        "status": "not_detected"
-      },
-      "identity_duplicate": {
-        "status": "not_detected"
-      },
-      "eligibility": {
-        "status": "passed",
-        "age": 22
-      },
-      "name_match": true
-    }
-  }
+	"decision": "ELIGIBLE",
+	"confidence": 0.99,
+	"reason": "Automated verification passed..."
 }
 ```
+
+### INELIGIBLE
+
+Returned when the participant fails the configured eligibility requirement, such as the minimum age.
+
+### REVIEW
+
+Used when the system detects uncertainty or a suspicious condition.
+
+Examples include:
+
+- Name mismatch
+- Face mismatch
+- Duplicate document
+- Identity reuse
+- Poor image quality
+- Tamper-risk indicators
+- Missing critical identity information
+
+This review pathway is intentionally conservative so that uncertain cases are not automatically treated as legitimate.
+
+---
+
+## Confidence Score
+
+The system returns a confidence score alongside the decision.
+
+Example:
+
+```json
+{
+	"decision": "ELIGIBLE",
+	"confidence": 0.99
+}
+```
+
+The current confidence score is a **rule-based heuristic**, not a statistically calibrated probability.
+
+It combines the outcomes of the individual verification signals.
+
+---
+
+## Human-Readable Explanation
+
+Every verification result includes a human-readable reason.
+
+Example:
+
+```text
+Automated verification passed because identity fields were
+successfully extracted, image quality passed, no identical
+duplicate was detected, no identity reuse was detected,
+age eligibility check passed, registration name matches
+the extracted name, and the selfie face matches the
+identity document.
+```
+
+For suspicious cases, the system explains why manual review was triggered.
+
+---
+
+## Architecture
+
+```text
+┌──────────────────────────┐
+│        Frontend          │
+│      HTML / JavaScript   │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│     Node.js / Express    │
+│       Backend API        │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│      Python / FastAPI    │
+│       AI Service         │
+└────────────┬─────────────┘
+             │
+      ┌──────┴───────────┐
+      │                  │
+      ▼                  ▼
+┌──────────────┐   ┌───────────────┐
+│ OCR Adapter  │   │ Verification  │
+│              │   │ Engine        │
+│ AWS Textract │   │               │
+│ / Tesseract  │   │ Eligibility   │
+└──────────────┘   │ Name Match    │
+                   │ Duplicate     │
+                   │ ID Reuse      │
+                   │ Quality       │
+                   │ Tamper Risk   │
+                   │ Face Match    │
+                   └───────────────┘
+                            │
+                            ▼
+                  Decision + Confidence
+                         + Reason
+```
+
+---
+
+## Hackingly OCR Integration
+
+The challenge requires the solution to build on top of the existing **AWS Textract-based DOB extraction pipeline**.
+
+The project therefore separates OCR from verification.
+
+```text
+Hackingly Existing OCR
+          │
+          ▼
+      OCR Output
+          │
+          ▼
+    Verification Layer
+          │
+          ▼
+Final Verification Result
+```
+
+The current prototype contains an OCR adapter and local fallback so that the complete system can be demonstrated independently.
+
+When the Hackingly OCR implementation is provided, the integration point is the OCR output rather than the verification engine.
+
+The expected integration flow is:
+
+```text
+Uploaded ID
+     │
+     ▼
+Hackingly AWS Textract Pipeline
+     │
+     ▼
+Extracted Identity Fields
+     │
+     ▼
+AI Verification Engine
+     │
+     ├── Eligibility
+     ├── Name Match
+     ├── Duplicate
+     ├── ID Reuse
+     ├── Quality
+     ├── Tamper Risk
+     └── Face Match
+     │
+     ▼
+Decision
+```
+
+This keeps the existing OCR pipeline as the foundation while adding the missing verification capabilities.
+
+---
+
+## API
+
+### Health Check
+
+```http
+GET /api/health
+```
+
+### Verify Identity
+
+```http
+POST /api/verify
+```
+
+Multipart form fields:
+
+| Field               | Description                      |
+| ------------------- | -------------------------------- |
+| `file`              | Identity document image          |
+| `selfie`            | Optional selfie image            |
+| `registration_name` | Name entered during registration |
+| `min_age`           | Minimum permitted age            |
+| `max_age`           | Maximum permitted age            |
+
+Example response:
+
+```json
+{
+	"success": true,
+	"decision": "ELIGIBLE",
+	"confidence": 0.99,
+	"reason": "Automated verification passed...",
+	"checks": {
+		"ocr": {},
+		"quality": {},
+		"tamper": {},
+		"duplicate": {},
+		"identity_duplicate": {},
+		"eligibility": {},
+		"name_match": true,
+		"face_match": {}
+	}
+}
+```
+
+---
+
+## Project Structure
+
+```text
+ai-identity-verification/
+│
+├── backend/
+│   ├── server.js
+│   ├── package.json
+│   └── package-lock.json
+│
+├── ai-service/
+│   ├── main.py
+│   ├── ocr/
+│   │   ├── extractor.py
+│   │   └── textract.py
+│   │
+│   ├── verification/
+│   │   ├── __init__.py
+│   │   ├── engine.py
+│   │   └── face.py
+│   │
+│   └── venv/
+│
+├── frontend/
+│   └── index.html
+│
+├── demo-data/
+│
+└── README.md
+```
+
+---
 
 ## Technology Stack
 
 ### Frontend
 
-- HTML5
-- CSS3
+- HTML
+- CSS
 - JavaScript
-- Fetch API
 
 ### Backend
 
@@ -319,325 +518,210 @@ If the names do not match, the submission can be routed for manual review.
 - Multer
 - CORS
 
-### AI / Computer Vision Service
+### AI Service
 
 - Python
 - FastAPI
 - Uvicorn
-- Tesseract OCR
-- PyTesseract
 - OpenCV
 - Pillow
+- Tesseract
+- DeepFace
+- FaceNet512
 
-## Project Structure
+### OCR Integration
 
-```text
-ai-identity-verification/
-│
-├── ai-service/
-│   ├── main.py
-│   ├── ocr/
-│   │   └── extractor.py
-│   ├── verification/
-│   │   ├── __init__.py
-│   │   └── engine.py
-│   └── venv/
-│
-├── backend/
-│   ├── server.js
-│   ├── package.json
-│   └── package-lock.json
-│
-├── frontend/
-│   └── index.html
-│
-├── demo-data/
-│   └── README.md
-│
-├── database/
-│
-├── .gitignore
-└── README.md
-```
+- AWS Textract
 
-> `venv/` and `node_modules/` are development dependencies and should not be committed to Git.
+### Verification
+
+- Rule-based verification engine
+- SHA-256 document hashing
+- Image quality analysis
+- Tamper-risk analysis
+- Face verification
+
+---
 
 ## Running Locally
 
-### Prerequisites
+### Requirements
 
-Install:
-
-- Python 3.10+
 - Node.js
-- npm
+- Python 3.10+
 - Tesseract OCR
-- Git
+- AWS credentials if using the Textract integration
 
-Verify Tesseract:
+---
 
-```powershell
-tesseract --version
-```
-
-### 1. Start the AI Service
-
-Open a terminal:
+### Start the AI Service
 
 ```powershell
 cd ai-service
-.\venv\Scripts\Activate.ps1
+.\venv\Scripts\activate
 python -m uvicorn main:app --host 127.0.0.1 --port 8001
 ```
 
-AI service:
+The AI service runs at:
 
 ```text
 http://127.0.0.1:8001
 ```
 
-Swagger API documentation:
+---
 
-```text
-http://127.0.0.1:8001/docs
-```
+### Start the Backend
 
-Health check:
-
-```text
-http://127.0.0.1:8001/health
-```
-
-### 2. Start the Backend
-
-Open a second terminal:
+Open another terminal:
 
 ```powershell
 cd backend
-npm install
-npm run dev
+node server.js
 ```
 
-Application:
+The backend runs at:
 
 ```text
 http://localhost:3000
 ```
 
-### 3. Open the Application
-
-Open:
+Open the application in a browser:
 
 ```text
 http://localhost:3000
 ```
 
-The browser interface allows a registration name, identity document and eligibility range to be submitted for verification.
+---
 
 ## Demo Scenarios
 
 ### Scenario 1 — Valid Registration
 
-Use a synthetic or anonymized document containing:
-
-```text
-Name: Rahul Sharma
-DOB: 15/08/2004
-ID: STU1234567
-```
-
-Enter:
-
 ```text
 Registration Name: Rahul Sharma
-Minimum Age: 18
-Maximum Age: 100
-```
-
-Expected result:
-
-```text
-ELIGIBLE
-```
-
-Expected checks:
-
-```text
-OCR              passed
-Image Quality    passed
-Tamper Risk      low
-Duplicate        not detected
-Identity Reuse   not detected
-Eligibility      passed
-Name Match       matched
-```
-
-### Scenario 2 — Registration Name Mismatch
-
-Use the same document but enter:
-
-```text
-Registration Name: Amit Kumar
-```
-
-The extracted document name remains:
-
-```text
-Rahul Sharma
-```
-
-Expected result:
-
-```text
-REVIEW
+ID: Valid identity document
+Selfie: Matching selfie
 ```
 
 Expected:
 
 ```text
-Name Match: mismatch
+ELIGIBLE
 ```
 
-This demonstrates that the registration identity is compared against the document identity.
+The result displays the extracted identity, verification checks, confidence, and explanation.
 
-### Scenario 3 — Reused Document
+---
 
-Submit the same document again during the same running service session.
+### Scenario 2 — Face Mismatch
 
-Expected result:
+```text
+Registration Name: Rahul Sharma
+ID: Rahul Sharma's identity document
+Selfie: Different person's selfie
+```
+
+Expected:
 
 ```text
 REVIEW
 ```
 
-The system can report:
+Reason:
 
 ```text
-Duplicate: detected
-Identity Reuse: detected
+The selfie face does not sufficiently match the
+identity document face.
 ```
 
-This demonstrates duplicate and identity-reuse handling.
+---
 
-## Design Principle: Review Uncertainty
+### Scenario 3 — Registration Name Mismatch
 
-The system does not attempt to automatically approve every submission.
+```text
+Registration Name: Different Name
+ID Name: Rahul Sharma
+```
 
-When important checks fail or suspicious signals are detected, the system routes the case to:
+Expected:
 
 ```text
 REVIEW
 ```
 
-This reduces the risk of treating uncertain automated results as definitive identity decisions.
+The system explains that the registration name does not sufficiently match the extracted identity name.
 
-## Current Prototype Scope
+---
 
-The working prototype currently demonstrates:
+## Current Prototype Limitations
 
-- Document upload
-- OCR
-- Identity extraction
-- Image-quality analysis
-- Basic tamper-risk analysis
-- Exact duplicate detection
-- Identity-number reuse detection
-- Age eligibility
-- Registration-name matching
-- Decision engine
-- Confidence score
-- Human-readable reasoning
-- Browser-based verification interface
-- Verification history
+This is a hackathon prototype rather than a production identity-verification platform.
 
-## Integration with Existing OCR Pipeline
+### Document Authenticity
 
-The verification layer is designed to extend an existing OCR-based registration workflow.
+Tamper analysis identifies potential risk indicators. It does not provide forensic proof that an identity document is genuine or issued by the claimed authority.
 
-In a production environment, the current OCR component can be connected to the existing **AWS Textract-based DOB extraction pipeline**, while retaining the downstream verification checks for quality, duplicate detection, identity reuse, eligibility and registration consistency.
+### Duplicate Persistence
 
-The current local Tesseract implementation provides a zero-cost development and demonstration fallback.
+Duplicate and identity-reuse registries are currently held in memory.
 
-## Future Integration
+Restarting the AI service clears the prototype's previously observed registrations.
 
-Potential production integrations include:
+A production implementation should persist these identifiers in a database.
 
-- AWS Textract-based OCR pipeline
-- Persistent database-backed duplicate detection
-- Secure document storage
-- Audit logging
-- Stronger document authenticity analysis
-- Face verification when a selfie is provided
-- Institution verification
-- Document-type-specific validation
-- Authentication and role-based access
-- Production monitoring
-- Human-review workflow
+### Confidence Calibration
 
-## Production Considerations
+The confidence score is currently heuristic and should be calibrated against a representative validation dataset before being used as a production probability.
 
-This prototype is intended to demonstrate the verification workflow.
+### OCR
 
-For production deployment, identity verification should use stronger controls than the basic prototype checks implemented here.
+The current standalone prototype includes a local OCR fallback. The intended deployment integration uses Hackingly's existing AWS Textract OCR pipeline as the upstream OCR source.
 
-In particular:
+---
 
-- Tamper-risk detection should not be treated as proof of authenticity.
-- Duplicate detection should use persistent, secure storage.
-- Identity documents should be encrypted and access-controlled.
-- Sensitive information should not be exposed unnecessarily.
-- Automated decisions should provide an appropriate manual-review path.
-- Confidence scores should be calibrated against representative validation data.
-- The existing AWS Textract pipeline can be integrated as the production OCR layer.
+## Future Production Extensions
 
-## Privacy
+Potential production improvements include:
 
-Use **synthetic or anonymized identity documents** for development and demonstrations.
+- Persistent identity/duplicate database
+- Event-specific eligibility rules
+- Better document-type-specific validation
+- Stronger document authenticity verification
+- Structured AWS Textract integration
+- Calibrated confidence scores
+- Audit logs
+- Human-review dashboard
+- Rate limiting and abuse prevention
+- Secure document storage and retention policies
+- Privacy-aware handling of identity images
+- Integration directly into the registration workflow
 
-Do not commit real identity documents, personally identifiable information, credentials, API keys or secrets to the repository.
+---
 
-## Demo Flow
+## Project Goal
+
+The goal is not simply to extract information from an identity document.
+
+The goal is to transform OCR output into an actionable verification decision:
 
 ```text
-1. Enter applicant registration name
-             |
-             v
-2. Upload identity document
-             |
-             v
-3. Click Verify Identity
-             |
-             v
-4. OCR extracts identity
-             |
-             v
-5. Quality and tamper-risk checks
-             |
-             v
-6. Duplicate and identity-reuse checks
-             |
-             v
-7. Eligibility calculation
-             |
-             v
-8. Registration-name matching
-             |
-             v
-9. Decision engine
-             |
-             v
-10. ELIGIBLE / REVIEW / INELIGIBLE
-             |
-             v
-11. Confidence + human-readable explanation
+          OCR
+           │
+           ▼
+     Identity Data
+           │
+           ▼
+   Multiple Verification
+        Signals
+           │
+           ▼
+   ┌───────┼────────┐
+   ▼       ▼        ▼
+ELIGIBLE  REVIEW  INELIGIBLE
+   │       │        │
+   └───────┼────────┘
+           ▼
+ Confidence + Reason
 ```
 
-## Project Status
-
-**Working Prototype**
-
-The current implementation provides an end-to-end browser-to-backend-to-AI-service verification workflow suitable for demonstration and further integration.
-
-## License
-
-This project was developed as a prototype for an AI build/hackathon challenge.
+The architecture allows the verification layer to extend an existing OCR pipeline without requiring major changes to the registration workflow.
