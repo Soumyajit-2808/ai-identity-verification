@@ -42,8 +42,8 @@ Authenticates an administrative or review operator.
 **Request Body (`application/json`)**:
 ```json
 {
-  "email": "admin@hackathon.org",
-  "password": "Password123!"
+  "email": "admin@verifyid.local",
+  "password": "Admin@12345"
 }
 ```
 
@@ -54,9 +54,10 @@ Authenticates an administrative or review operator.
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "user": {
     "id": "11111111-1111-1111-1111-111111111111",
-    "email": "admin@hackathon.org",
-    "name": "System Administrator",
-    "role": "admin"
+    "email": "admin@verifyid.local",
+    "fullName": "System Administrator",
+    "role": "admin",
+    "organizationName": "National Hackathon Federation"
   }
 }
 ```
@@ -71,74 +72,90 @@ Submits an identity document and optional selfie for automated OCR extraction, t
 **Request (`multipart/form-data`)**:
 | Field | Type | Required | Description |
 | :--- | :--- | :---: | :--- |
-| `document` | File (Binary) | **Yes** | Identity document image (JPEG, PNG, WebP, or PDF, max 10MB). |
+| `file` (or `document`) | File (Binary) | **Yes** | Identity document image (JPEG, PNG, WebP, max 12MB). |
 | `selfie` | File (Binary) | No | Optional camera selfie for biometric face comparison. |
-| `fullName` | String | **Yes** | Applicant's registered full name. |
-| `email` | String | **Yes** | Applicant's registered email address. |
-| `eventId` | String | No | Target event ID (Defaults to active event `HACK2026`). |
-| `dob` | String (YYYY-MM-DD) | No | Registered date of birth for cross-validation. |
-| `institution` | String | No | Registered academic institution or company. |
+| `registration_name` (or `fullName`) | String | **Yes** | Applicant's registered full name. |
+| `event_code` (or `eventId`) | String | No | Target event code (Defaults to active event `HACK2026`). |
+| `email` | String | No | Applicant's registered email address for notification. |
+| `phone` | String | No | Applicant's contact phone number. |
 
 **Response (`200 OK`)**:
 ```json
 {
   "success": true,
-  "registrationId": "6c457f5c-dfbd-4aa4-8f7d-a2f00e9cfbc1",
-  "status": "APPROVED",
   "decision": "ELIGIBLE",
-  "confidence": 0.95,
-  "riskScore": 0.05,
-  "evidenceScore": 0.94,
+  "confidence_score": 0.94,
+  "evidence_score": 0.95,
+  "risk_score": 0.05,
+  "summary_reason": "Automated verification passed successfully. Identity document fields were extracted, document quality is acceptable, no tampering anomalies were observed, age eligibility was verified, and registration name matches the identity document.",
+  "requestId": "6c457f5c-dfbd-4aa4-8f7d-a2f00e9cfbc1",
+  "registrationId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "reviewCaseId": null,
+  "identity": {
+    "name": "Jane Doe",
+    "date_of_birth": "1998-05-14",
+    "calculated_age": 28,
+    "id_number_masked": "********9012",
+    "id_type": "AADHAAR",
+    "institution": "National Tech University"
+  },
   "extractedData": {
     "name": "Jane Doe",
     "dob": "1998-05-14",
-    "idNumber": "123456789012",
-    "idType": "Aadhaar",
+    "idNumber": "********9012",
+    "idType": "AADHAAR",
     "institution": "National Tech University"
   },
   "signals": [
     {
-      "signal_type": "OCR_EXTRACTION",
-      "status": "PASS",
-      "confidence": 0.95,
-      "details": { "provider": "tesseract", "word_count": 48 }
+      "signal_type": "OCR",
+      "status": "PASSED",
+      "score": 1.0,
+      "reason": "Essential identity fields (name, date of birth) were extracted successfully. Document type identified as AADHAAR.",
+      "details": { "has_name": true, "has_dob": true, "has_id_number": true, "id_type": "AADHAAR" }
     },
     {
-      "signal_type": "ELIGIBILITY_AGE",
-      "status": "PASS",
-      "confidence": 1.0,
-      "details": { "calculated_age": 28, "minimum_age": 18 }
+      "signal_type": "QUALITY",
+      "status": "PASSED",
+      "score": 1.0,
+      "reason": "Image quality is clear and legible for automated identity verification.",
+      "details": { "blur_score": 240, "brightness": 128, "contrast": 58, "resolution": "1600x1000" }
+    },
+    {
+      "signal_type": "TAMPER",
+      "status": "PASSED",
+      "score": 1.0,
+      "reason": "Document shows natural compression characteristics and no detected manipulation anomalies.",
+      "details": { "risk_level": "LOW", "editing_tools": [] }
+    },
+    {
+      "signal_type": "ELIGIBILITY",
+      "status": "PASSED",
+      "score": 1.0,
+      "reason": "Applicant age (28) satisfies the configured eligibility requirement (18 to 100 years).",
+      "details": { "min_age": 18, "max_age": 100, "calculated_age": 28 }
     },
     {
       "signal_type": "NAME_MATCH",
-      "status": "PASS",
-      "confidence": 1.0,
+      "status": "PASSED",
+      "score": 1.0,
+      "reason": "Registration name 'Jane Doe' matched extracted name 'Jane Doe' (score: 1.0, method: exact_token_set).",
       "details": { "method": "exact_token_set", "score": 1.0 }
     },
     {
       "signal_type": "DUPLICATE_FILE",
-      "status": "PASS",
-      "confidence": 1.0,
-      "details": { "duplicate": false }
+      "status": "PASSED",
+      "score": 1.0,
+      "reason": "No identical document file submission previously detected for this event.",
+      "details": { "fileHash": "a1b2c3d4..." }
     },
     {
       "signal_type": "IDENTITY_REUSE",
-      "status": "PASS",
-      "confidence": 1.0,
-      "details": { "reused": false }
-    },
-    {
-      "signal_type": "FACE_MATCH",
-      "status": "PASS",
-      "confidence": 0.92,
-      "details": { "verified": true, "similarity": 0.92 }
+      "status": "PASSED",
+      "score": 1.0,
+      "reason": "Extracted ID number has not been seen in any prior registration for this event.",
+      "details": {}
     }
-  ],
-  "reasons": [
-    "Identity document OCR extraction successful (Tesseract).",
-    "Age eligibility verified: applicant is 28 years old (threshold >= 18).",
-    "Name matches registration record with high similarity (100%).",
-    "Biometric face match verified against document photo (92% similarity)."
   ]
 }
 ```

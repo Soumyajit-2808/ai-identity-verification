@@ -71,6 +71,7 @@ class OCRResponse(BaseModel):
     raw_text: str
 
 
+@app.post("/ocr", response_model=OCRResponse)
 @app.post("/api/ocr", response_model=OCRResponse)
 async def ocr_document(file: UploadFile = File(...)):
     """
@@ -103,6 +104,7 @@ class VerificationResponse(BaseModel):
     verification: VerificationEngineResult
 
 
+@app.post("/verify", response_model=VerificationResponse)
 @app.post("/api/verify", response_model=VerificationResponse)
 async def verify_identity(
     file: UploadFile = File(...),

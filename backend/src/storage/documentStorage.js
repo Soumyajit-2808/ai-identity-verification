@@ -8,7 +8,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const STORAGE_ROOT = path.resolve(__dirname, '../../../uploads/documents');
+const STORAGE_ROOT = process.env.STORAGE_PATH
+  ? path.resolve(process.env.STORAGE_PATH)
+  : path.resolve(__dirname, '../../uploads/documents');
 
 function initStorage() {
   if (!fs.existsSync(STORAGE_ROOT)) {

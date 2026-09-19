@@ -1471,7 +1471,7 @@
             <td><span class="badge-status badge-review">${c.original_decision}</span></td>
             <td style="max-width:300px; font-size:0.8rem; color:var(--slate-600);">${escapeHtml(c.reviewer_notes || c.summary_reason || '—')}</td>
             <td style="font-size:0.75rem; color:var(--slate-400);">${new Date(c.created_at).toLocaleString()}</td>
-            <td><button class="btn-action" onclick="openReviewModal('${c.id}')">Inspect & Resolve</button></td>
+            <td><button class="btn-action" data-case-id="${escapeHtml(c.id)}" onclick="openReviewModal(this.getAttribute('data-case-id'))">Inspect & Resolve</button></td>
           </tr>
         `).join('');
       } catch (err) {
@@ -1498,8 +1498,10 @@
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1rem 0;">
               ${data.case.documents.map(d => `
                 <div style="border:1px solid var(--slate-200); border-radius:var(--radius-md); padding:0.5rem; text-align:center;">
-                  <div style="font-size:0.75rem; font-weight:700; margin-bottom:0.25rem;">${d.document_type}</div>
-                  <img src="/api/documents/${d.id}/file" style="max-width:100%; max-height:220px; object-fit:contain; border-radius:var(--radius-sm);" alt="Document preview" onerror="this.src=''; this.alt='Image stored securely (auth required)';" />
+                  <div style="font-size:0.75rem; font-weight:700; margin-bottom:0.25rem;">${escapeHtml(d.document_type)}</div>
+                  <div id="docImgContainer_${escapeHtml(d.id)}" style="min-height:140px; display:flex; align-items:center; justify-content:center; background:var(--slate-100); border-radius:var(--radius-sm);">
+                    <span style="font-size:0.75rem; color:var(--slate-400);">Loading secure preview...</span>
+                  </div>
                 </div>
               `).join('')}
             </div>
@@ -1513,6 +1515,32 @@
           </div>
           ${imagesHtml}
         `;
+
+        // Authenticated image streaming
+        if (data.case.documents && data.case.documents.length > 0) {
+          data.case.documents.forEach(async (d) => {
+            try {
+              const imgRes = await fetch(`/api/documents/${d.id}/file`, {
+                headers: { 'Authorization': `Bearer ${state.authToken}` }
+              });
+              const container = document.getElementById(`docImgContainer_${d.id}`);
+              if (!imgRes.ok) {
+                if (container) container.innerHTML = `<span style="font-size:0.75rem; color:var(--rose-500); padding:0.5rem;">Access restricted</span>`;
+                return;
+              }
+              const blob = await imgRes.blob();
+              const objectUrl = URL.createObjectURL(blob);
+              if (container) {
+                container.innerHTML = `<img src="${objectUrl}" style="max-width:100%; max-height:240px; object-fit:contain; border-radius:var(--radius-sm);" alt="${escapeHtml(d.document_type)}" />`;
+              }
+            } catch (imgErr) {
+              const container = document.getElementById(`docImgContainer_${d.id}`);
+              if (container) {
+                container.innerHTML = `<span style="font-size:0.75rem; color:var(--slate-400); padding:0.5rem;">Preview unavailable</span>`;
+              }
+            }
+          });
+        }
 
         document.getElementById('modalReviewNotes').value = '';
         document.getElementById('caseModal').classList.add('active');

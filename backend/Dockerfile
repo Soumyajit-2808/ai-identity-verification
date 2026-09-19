@@ -13,11 +13,15 @@ FROM node:22-alpine AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
+ENV STORAGE_PATH=/app/uploads/documents
+ENV SCHEMA_PATH=/app/database/schema.sql
 
 # Install curl for healthchecks
 RUN apk add --no-cache curl
 
-# Create non-root user
+# Create persistent storage directories with non-root ownership
+RUN mkdir -p /app/uploads/documents /app/data && chown -R node:node /app
+
 USER node
 
 COPY --chown=node:node --from=builder /app/node_modules ./node_modules
@@ -25,11 +29,6 @@ COPY --chown=node:node --from=builder /app/src ./src
 COPY --chown=node:node --from=builder /app/database ./database
 COPY --chown=node:node --from=builder /app/package*.json ./
 COPY --chown=node:node --from=builder /app/server.js ./
-
-# Create uploads directory
-USER root
-RUN mkdir -p /app/uploads/documents /app/data && chown -R node:node /app/uploads /app/data
-USER node
 
 EXPOSE 3000
 

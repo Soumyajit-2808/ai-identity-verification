@@ -6,7 +6,15 @@
 const jwt = require('jsonwebtoken');
 const { findUserById } = require('../db/repositories/userRepository');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'VERIFY_ID_SECURE_JWT_SECRET_2026_KEY_PROD';
+const DEFAULT_DEV_SECRET = 'VERIFY_ID_DEV_JWT_SECRET_KEY_CHANGE_IN_PRODUCTION';
+
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === DEFAULT_DEV_SECRET || process.env.JWT_SECRET === 'VERIFY_ID_SECURE_JWT_SECRET_2026_KEY_PROD') {
+    throw new Error('[Security Exception] In production mode, JWT_SECRET must be configured with a unique, secure secret key.');
+  }
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_DEV_SECRET;
 const TOKEN_EXPIRY = '24h';
 
 function generateToken(user) {

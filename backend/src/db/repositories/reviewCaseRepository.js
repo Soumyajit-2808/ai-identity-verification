@@ -27,13 +27,13 @@ async function createReviewCase({
   return { id, resultId, registrationId, status: 'OPEN', priority };
 }
 
-async function listReviewCases({ eventId = null, status = null, limit = 50 } = {}) {
+async function listReviewCases({ eventId = null, status = null, organizationId = null, limit = 50 } = {}) {
   let queryText = `
     SELECT rc.id, rc.result_id, rc.registration_id, rc.event_id, rc.status,
            rc.priority, rc.assigned_to, rc.reviewer_notes, rc.resolution_reason,
            rc.created_at, rc.updated_at, rc.resolved_at,
            reg.registration_name, reg.email,
-           ev.name as event_name, ev.code as event_code,
+           ev.name as event_name, ev.code as event_code, ev.organization_id,
            vr.decision as original_decision, vr.confidence_score, vr.summary_reason,
            u.full_name as assigned_to_name
     FROM review_cases rc
@@ -45,6 +45,11 @@ async function listReviewCases({ eventId = null, status = null, limit = 50 } = {
   `;
   const params = [];
   let pIdx = 1;
+
+  if (organizationId) {
+    queryText += ` AND ev.organization_id = $${pIdx++}`;
+    params.push(organizationId);
+  }
 
   if (eventId) {
     queryText += ` AND rc.event_id = $${pIdx++}`;
@@ -69,24 +74,30 @@ async function listReviewCases({ eventId = null, status = null, limit = 50 } = {
   return res.rows;
 }
 
-async function getReviewCaseById(id) {
-  const res = await query(
-    `SELECT rc.id, rc.result_id, rc.registration_id, rc.event_id, rc.status,
-            rc.priority, rc.assigned_to, rc.reviewer_notes, rc.resolution_reason,
-            rc.created_at, rc.updated_at, rc.resolved_at,
-            reg.registration_name, reg.email, reg.phone,
-            ev.name as event_name, ev.code as event_code,
-            vr.decision as original_decision, vr.confidence_score, vr.summary_reason,
-            vr.extracted_identity_json,
-            u.full_name as assigned_to_name
-     FROM review_cases rc
-     JOIN registrations reg ON rc.registration_id = reg.id
-     JOIN events ev ON rc.event_id = ev.id
-     JOIN verification_results vr ON rc.result_id = vr.id
-     LEFT JOIN users u ON rc.assigned_to = u.id
-     WHERE rc.id = $1`,
-    [id]
-  );
+async function getReviewCaseById(id, organizationId = null) {
+  let queryText = `
+    SELECT rc.id, rc.result_id, rc.registration_id, rc.event_id, rc.status,
+           rc.priority, rc.assigned_to, rc.reviewer_notes, rc.resolution_reason,
+           rc.created_at, rc.updated_at, rc.resolved_at,
+           reg.registration_name, reg.email, reg.phone,
+           ev.name as event_name, ev.code as event_code, ev.organization_id,
+           vr.decision as original_decision, vr.confidence_score, vr.summary_reason,
+           vr.extracted_identity_json,
+           u.full_name as assigned_to_name
+    FROM review_cases rc
+    JOIN registrations reg ON rc.registration_id = reg.id
+    JOIN events ev ON rc.event_id = ev.id
+    JOIN verification_results vr ON rc.result_id = vr.id
+    LEFT JOIN users u ON rc.assigned_to = u.id
+    WHERE rc.id = $1
+  `;
+  const params = [id];
+  if (organizationId) {
+    queryText += ` AND ev.organization_id = $2`;
+    params.push(organizationId);
+  }
+
+  const res = await query(queryText, params);
 
   if (res.rows.length === 0) return null;
   const row = res.rows[0];

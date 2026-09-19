@@ -2,7 +2,7 @@
 
 [![CI Pipeline](https://github.com/Soumyajit-2808/ai-identity-verification/actions/workflows/ci.yml/badge.svg)](https://github.com/Soumyajit-2808/ai-identity-verification/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.5.0-brightgreen.svg)](https://nodejs.org/)
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://python.org/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 
@@ -140,7 +140,7 @@ ai-identity-verification/
 ## 4. Quickstart & Local Setup
 
 ### Prerequisites
-- **Node.js**: v20.x or later
+- **Node.js**: v22.5.0 or later (required for native `node:sqlite` engine)
 - **Python**: v3.11 or later
 - **Tesseract OCR** (optional for local OCR): `tesseract-ocr` package on Linux / macOS or installer on Windows.
 
@@ -177,9 +177,9 @@ ai-identity-verification/
 
 5. **Access the Application**:
    - **Verification Portal & Dashboard**: Open [http://localhost:3000](http://localhost:3000)
-   - **Operator Review Login**: Click "Operator Login" and use credentials:
-     - **Email**: `admin@hackathon.org` | **Password**: `Password123!`
-     - **Email**: `reviewer@hackathon.org` | **Password**: `Password123!`
+   - **Operator Review Login**: Click "Operator Sign In" and use default seeded credentials:
+     - **Admin**: `admin@verifyid.local` | **Password**: `Admin@12345`
+     - **Reviewer**: `reviewer@verifyid.local` | **Password**: `Reviewer@12345`
    - **AI Service OpenAPI Docs**: Open [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs)
 
 ---

@@ -9,9 +9,10 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-identity_verification}
       POSTGRES_USER: ${POSTGRES_USER:-verifyid_admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-verifyid_secret_pw_2026}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided in environment}
     ports:
-      - "5432:5432"
+      # Bound to localhost interface only to prevent public network exposure
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
@@ -30,7 +31,7 @@ services:
     container_name: verifyid_ai_service
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     environment:
       - AWS_REGION=${AWS_REGION:-}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
@@ -54,11 +55,13 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-verifyid_admin}:${POSTGRES_PASSWORD:-verifyid_secret_pw_2026}@postgres:5432/${POSTGRES_DB:-identity_verification}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-verifyid_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-identity_verification}
       - AI_SERVICE_URL=http://ai-service:8001
-      - JWT_SECRET=${JWT_SECRET:-PROD_SECURE_JWT_SECRET_VERIFYID_2026}
-      - PII_SALT=${PII_SALT:-PROD_PII_HMAC_SALT_KEY_2026}
-      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in environment}
+      - PII_SALT=${PII_SALT:?PII_SALT must be set in environment}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - STORAGE_PATH=/app/uploads/documents
+      - SCHEMA_PATH=/app/database/schema.sql
     volumes:
       - document_uploads:/app/uploads/documents
     depends_on:

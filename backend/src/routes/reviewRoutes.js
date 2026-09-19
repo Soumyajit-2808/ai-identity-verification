@@ -22,6 +22,7 @@ router.get('/review-cases', requireAuth, requireRole(['reviewer', 'admin']), asy
     const cases = await listReviewCases({
       eventId: eventId || null,
       status: status || null,
+      organizationId: req.user.organization_id || null,
       limit: limit ? Number(limit) : 50,
     });
     res.json({ success: true, count: cases.length, cases });
@@ -32,9 +33,9 @@ router.get('/review-cases', requireAuth, requireRole(['reviewer', 'admin']), asy
 
 router.get('/review-cases/:id', requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
   try {
-    const reviewCase = await getReviewCaseById(req.params.id);
+    const reviewCase = await getReviewCaseById(req.params.id, req.user.organization_id || null);
     if (!reviewCase) {
-      return res.status(404).json({ success: false, error: 'Review case not found.' });
+      return res.status(404).json({ success: false, error: 'Review case not found or unauthorized.' });
     }
     res.json({ success: true, case: reviewCase });
   } catch (err) {
@@ -54,9 +55,9 @@ router.patch('/review-cases/:id', requireAuth, requireRole(['reviewer', 'admin']
       });
     }
 
-    const currentCase = await getReviewCaseById(req.params.id);
+    const currentCase = await getReviewCaseById(req.params.id, req.user.organization_id || null);
     if (!currentCase) {
-      return res.status(404).json({ success: false, error: 'Review case not found.' });
+      return res.status(404).json({ success: false, error: 'Review case not found or unauthorized.' });
     }
 
     const updated = await updateReviewCase(req.params.id, {
@@ -98,12 +99,23 @@ router.patch('/review-cases/:id', requireAuth, requireRole(['reviewer', 'admin']
 // Secure Document Retrieval for authorized operators
 router.get('/documents/:id/file', requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
   try {
-    const docRes = await query('SELECT * FROM identity_documents WHERE id = $1', [req.params.id]);
+    const docRes = await query(
+      `SELECT d.*, ev.organization_id
+       FROM identity_documents d
+       JOIN registrations reg ON d.registration_id = reg.id
+       JOIN events ev ON reg.event_id = ev.id
+       WHERE d.id = $1`,
+      [req.params.id]
+    );
     if (docRes.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Document not found.' });
     }
 
     const doc = docRes.rows[0];
+    if (doc.organization_id && req.user.organization_id && doc.organization_id !== req.user.organization_id) {
+      return res.status(403).json({ success: false, error: 'Access denied: document belongs to another organization.' });
+    }
+
     const buffer = await getDocumentBuffer(doc.storage_path);
     if (!buffer) {
       return res.status(404).json({ success: false, error: 'Document file missing from storage.' });

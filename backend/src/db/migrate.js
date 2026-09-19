@@ -13,8 +13,29 @@ async function runMigrations() {
   initDb();
   console.log('[Migration] Running database migrations...');
 
-  const schemaPath = path.resolve(__dirname, '../../../database/schema.sql');
-  const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
+  const candidatePaths = [
+    process.env.SCHEMA_PATH,
+    path.resolve(__dirname, '../../../database/schema.sql'),
+    path.resolve(__dirname, '../../database/schema.sql'),
+    path.resolve(__dirname, '../database/schema.sql'),
+    path.resolve(__dirname, './schema.sql'),
+  ].filter(Boolean);
+
+  let schemaSql = null;
+  let resolvedPath = null;
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      schemaSql = fs.readFileSync(candidate, 'utf-8');
+      resolvedPath = candidate;
+      break;
+    }
+  }
+
+  if (!schemaSql) {
+    throw new Error(`[Migration Error] schema.sql could not be found. Checked paths: ${candidatePaths.join(', ')}`);
+  }
+
+  console.log(`[Migration] Loaded schema from: ${resolvedPath}`);
 
   // Strip single-line comments and execute
   const cleanSql = schemaSql
@@ -73,31 +94,43 @@ async function seedDefaults() {
   }
 
   // 3. Default Admin User
-  const adminCheck = await query('SELECT id FROM users WHERE email = $1', ['admin@verifyid.local']);
+  const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@verifyid.local';
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'Admin@12345';
+  if (process.env.NODE_ENV === 'production' && adminPassword === 'Admin@12345') {
+    console.warn('[Security Warning] Default seed admin password is being used in production. Set SEED_ADMIN_PASSWORD in your environment.');
+  }
+
+  const adminCheck = await query('SELECT id FROM users WHERE email = $1', [adminEmail]);
   if (adminCheck.rows.length === 0) {
     const adminId = uuidv4();
     const salt = bcrypt.genSaltSync(10);
-    const passwordHash = bcrypt.hashSync('Admin@12345', salt);
+    const passwordHash = bcrypt.hashSync(adminPassword, salt);
     await query(
       `INSERT INTO users (id, organization_id, email, password_hash, full_name, role)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [adminId, orgId, 'admin@verifyid.local', passwordHash, 'System Administrator', 'admin']
+      [adminId, orgId, adminEmail, passwordHash, 'System Administrator', 'admin']
     );
-    console.log('[Migration] Seeded default admin user: admin@verifyid.local / Admin@12345');
+    console.log(`[Migration] Seeded default admin user: ${adminEmail}`);
   }
 
   // 4. Default Reviewer User
-  const reviewerCheck = await query('SELECT id FROM users WHERE email = $1', ['reviewer@verifyid.local']);
+  const reviewerEmail = process.env.SEED_REVIEWER_EMAIL || 'reviewer@verifyid.local';
+  const reviewerPassword = process.env.SEED_REVIEWER_PASSWORD || 'Reviewer@12345';
+  if (process.env.NODE_ENV === 'production' && reviewerPassword === 'Reviewer@12345') {
+    console.warn('[Security Warning] Default seed reviewer password is being used in production. Set SEED_REVIEWER_PASSWORD in your environment.');
+  }
+
+  const reviewerCheck = await query('SELECT id FROM users WHERE email = $1', [reviewerEmail]);
   if (reviewerCheck.rows.length === 0) {
     const reviewerId = uuidv4();
     const salt = bcrypt.genSaltSync(10);
-    const passwordHash = bcrypt.hashSync('Reviewer@12345', salt);
+    const passwordHash = bcrypt.hashSync(reviewerPassword, salt);
     await query(
       `INSERT INTO users (id, organization_id, email, password_hash, full_name, role)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [reviewerId, orgId, 'reviewer@verifyid.local', passwordHash, 'Chief Verification Officer', 'reviewer']
+      [reviewerId, orgId, reviewerEmail, passwordHash, 'Chief Verification Officer', 'reviewer']
     );
-    console.log('[Migration] Seeded default reviewer user: reviewer@verifyid.local / Reviewer@12345');
+    console.log(`[Migration] Seeded default reviewer user: ${reviewerEmail}`);
   }
 }
 

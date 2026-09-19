@@ -41,11 +41,12 @@ router.post(
   '/verify',
   upload.fields([
     { name: 'file', maxCount: 1 },
+    { name: 'document', maxCount: 1 },
     { name: 'selfie', maxCount: 1 },
   ]),
   async (req, res, next) => {
     try {
-      const docFile = req.files?.file?.[0];
+      const docFile = req.files?.file?.[0] || req.files?.document?.[0];
       const selfieFile = req.files?.selfie?.[0];
 
       if (!docFile) {
@@ -56,7 +57,7 @@ router.post(
         });
       }
 
-      const registrationName = (req.body.registration_name || '').trim();
+      const registrationName = (req.body.registration_name || req.body.fullName || req.body.name || '').trim();
       if (!registrationName) {
         return res.status(400).json({
           success: false,
@@ -66,7 +67,7 @@ router.post(
       }
 
       // 1. Validate Event
-      const eventCode = req.body.event_code || 'HACK2026';
+      const eventCode = req.body.event_code || req.body.eventId || 'HACK2026';
       const event = await getEventByCode(eventCode);
       if (!event) {
         return res.status(404).json({
@@ -395,9 +396,14 @@ router.post(
           success: true,
           decision: finalDecision,
           confidence_score: finalConfidence,
+          confidence: finalConfidence,
           evidence_score: aiVerification.evidence_score,
+          evidenceScore: aiVerification.evidence_score,
           risk_score: finalRisk,
+          riskScore: finalRisk,
           summary_reason: finalSummaryReason,
+          summaryReason: finalSummaryReason,
+          reasons: summaryReasons,
           requestId: verifReq.id,
           registrationId: registration.id,
           reviewCaseId,
@@ -407,6 +413,13 @@ router.post(
             calculated_age: extractedIdentity.calculated_age,
             id_number_masked: maskIdNumber(extractedIdentity.id_number),
             id_type: extractedIdentity.id_type || 'UNKNOWN',
+            institution: extractedIdentity.institution || 'Not detected',
+          },
+          extractedData: {
+            name: extractedIdentity.name || 'Not detected',
+            dob: extractedIdentity.date_of_birth || 'Not detected',
+            idNumber: maskIdNumber(extractedIdentity.id_number),
+            idType: extractedIdentity.id_type || 'UNKNOWN',
             institution: extractedIdentity.institution || 'Not detected',
           },
           signals,

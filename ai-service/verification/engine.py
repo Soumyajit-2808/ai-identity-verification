@@ -186,19 +186,18 @@ def evaluate_verification(
     # -------------------------------------------------------------
     # Multi-Signal Evidence & Risk Scoring
     # -------------------------------------------------------------
-    # Evidence score represents positive corroboration (0.0 to 1.0)
+    # Evidence score represents positive corroboration across verified signals (0.0 to 1.0)
     pos_evidence = 0.0
     if ocr_status == "PASSED": pos_evidence += 0.25
     if quality_res.status == "PASSED": pos_evidence += 0.15
     if tamper_res.risk_level == "LOW": pos_evidence += 0.15
-    if eligibility_signal.status == "PASSED": pos_evidence += 0.20
-    if name_res.matched: pos_evidence += 0.15
-    if face_res.status == "PASSED": pos_evidence += 0.10
-    elif face_res.status in ("SKIPPED", "NOT_PROVIDED") and not require_selfie: pos_evidence += 0.10
+    if eligibility_signal.status == "PASSED": pos_evidence += 0.25
+    if name_res.matched: pos_evidence += 0.20
+    if face_res.status == "PASSED": pos_evidence += 0.15
 
     evidence_score = round(min(1.0, pos_evidence), 2)
 
-    # Risk score represents presence of anomalies and defects (0.0 to 1.0)
+    # Risk score represents presence of anomalies, mismatches, and defects (0.0 to 1.0)
     risk = 0.0
     if quality_res.status == "FAILED": risk += 0.40
     elif quality_res.status == "REVIEW": risk += 0.20
@@ -207,11 +206,12 @@ def evaluate_verification(
     elif tamper_res.risk_level == "MEDIUM": risk += 0.25
 
     if not name_res.matched: risk += 0.35
-    if face_res.status == "REVIEW": risk += 0.30
+    if face_res.status == "FAILED": risk += 0.45
+    elif face_res.status == "REVIEW": risk += 0.30
 
     risk_score = round(min(1.0, risk), 2)
 
-    # Calibrated confidence score
+    # Calibrated confidence score based on corroborated evidence penalized by detected risk
     confidence_score = round(max(0.10, min(0.98, evidence_score * (1.0 - (risk_score * 0.7)))), 2)
 
     # -------------------------------------------------------------
@@ -242,7 +242,7 @@ def evaluate_verification(
             reasons.append("tampering or structural anomaly flags")
         if not name_res.matched:
             reasons.append("registration name discrepancy")
-        if face_res.status == "REVIEW":
+        if face_res.status in ("FAILED", "REVIEW"):
             reasons.append("facial verification mismatch or detection anomaly")
         if require_selfie and face_res.status == "NOT_PROVIDED":
             reasons.append("missing mandatory selfie")

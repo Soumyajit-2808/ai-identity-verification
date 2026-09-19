@@ -15,6 +15,9 @@ function hashIdNumber(idNumber) {
   if (!idNumber) return null;
   const normalized = idNumber.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   const salt = process.env.PII_SALT || 'VERIFY_ID_SALT_2026_DEFAULT';
+  if (process.env.NODE_ENV === 'production' && salt === 'VERIFY_ID_SALT_2026_DEFAULT') {
+    console.warn('[Security Warning] Default PII_SALT is being used in production. Set PII_SALT in your environment.');
+  }
   return crypto.createHmac('sha256', salt).update(normalized).digest('hex');
 }
 
@@ -121,7 +124,8 @@ async function registerIdentity({
     `INSERT INTO identity_registry (
        id, event_id, registration_id, id_number_hash, id_number_masked,
        id_type, registered_name, document_file_hash
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (event_id, id_number_hash) DO NOTHING`,
     [
       id,
       eventId,
