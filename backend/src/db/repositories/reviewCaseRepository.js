@@ -1,0 +1,164 @@
+/**
+ * Review Cases Repository
+ * Manages manual operator review workflows (OPEN, IN_REVIEW, APPROVED, REJECTED, ESCALATED).
+ */
+
+const crypto = require('crypto');
+const uuidv4 = () => crypto.randomUUID();
+const { query } = require('../connection');
+
+async function createReviewCase({
+  resultId,
+  registrationId,
+  eventId,
+  priority = 'MEDIUM',
+  reviewerNotes = null,
+}, dbClient = null) {
+  const id = uuidv4();
+  const runner = dbClient ? dbClient.query.bind(dbClient) : query;
+
+  await runner(
+    `INSERT INTO review_cases (
+       id, result_id, registration_id, event_id, status, priority, reviewer_notes
+     ) VALUES ($1, $2, $3, $4, 'OPEN', $5, $6)`,
+    [id, resultId, registrationId, eventId, priority, reviewerNotes]
+  );
+
+  return { id, resultId, registrationId, status: 'OPEN', priority };
+}
+
+async function listReviewCases({ eventId = null, status = null, limit = 50 } = {}) {
+  let queryText = `
+    SELECT rc.id, rc.result_id, rc.registration_id, rc.event_id, rc.status,
+           rc.priority, rc.assigned_to, rc.reviewer_notes, rc.resolution_reason,
+           rc.created_at, rc.updated_at, rc.resolved_at,
+           reg.registration_name, reg.email,
+           ev.name as event_name, ev.code as event_code,
+           vr.decision as original_decision, vr.confidence_score, vr.summary_reason,
+           u.full_name as assigned_to_name
+    FROM review_cases rc
+    JOIN registrations reg ON rc.registration_id = reg.id
+    JOIN events ev ON rc.event_id = ev.id
+    JOIN verification_results vr ON rc.result_id = vr.id
+    LEFT JOIN users u ON rc.assigned_to = u.id
+    WHERE 1=1
+  `;
+  const params = [];
+  let pIdx = 1;
+
+  if (eventId) {
+    queryText += ` AND rc.event_id = $${pIdx++}`;
+    params.push(eventId);
+  }
+
+  if (status) {
+    queryText += ` AND rc.status = $${pIdx++}`;
+    params.push(status);
+  }
+
+  queryText += ` ORDER BY 
+    CASE rc.priority
+      WHEN 'URGENT' THEN 1
+      WHEN 'HIGH' THEN 2
+      WHEN 'MEDIUM' THEN 3
+      ELSE 4
+    END, rc.created_at DESC LIMIT $${pIdx}`;
+  params.push(limit);
+
+  const res = await query(queryText, params);
+  return res.rows;
+}
+
+async function getReviewCaseById(id) {
+  const res = await query(
+    `SELECT rc.id, rc.result_id, rc.registration_id, rc.event_id, rc.status,
+            rc.priority, rc.assigned_to, rc.reviewer_notes, rc.resolution_reason,
+            rc.created_at, rc.updated_at, rc.resolved_at,
+            reg.registration_name, reg.email, reg.phone,
+            ev.name as event_name, ev.code as event_code,
+            vr.decision as original_decision, vr.confidence_score, vr.summary_reason,
+            vr.extracted_identity_json,
+            u.full_name as assigned_to_name
+     FROM review_cases rc
+     JOIN registrations reg ON rc.registration_id = reg.id
+     JOIN events ev ON rc.event_id = ev.id
+     JOIN verification_results vr ON rc.result_id = vr.id
+     LEFT JOIN users u ON rc.assigned_to = u.id
+     WHERE rc.id = $1`,
+    [id]
+  );
+
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+
+  // Fetch signals
+  const signalsRes = await query(
+    `SELECT signal_type, status, score, raw_details_json, reason
+     FROM verification_signals
+     WHERE result_id = $1
+     ORDER BY created_at ASC`,
+    [row.result_id]
+  );
+
+  // Fetch document metadata
+  const docsRes = await query(
+    `SELECT id, document_type, file_hash, original_filename, mime_type, file_size_bytes, storage_path, created_at
+     FROM identity_documents
+     WHERE registration_id = $1`,
+    [row.registration_id]
+  );
+
+  return {
+    ...row,
+    extracted_identity: JSON.parse(row.extracted_identity_json || '{}'),
+    signals: signalsRes.rows.map(s => ({
+      signalType: s.signal_type,
+      status: s.status,
+      score: s.score,
+      reason: s.reason,
+      details: JSON.parse(s.raw_details_json || '{}'),
+    })),
+    documents: docsRes.rows,
+  };
+}
+
+async function updateReviewCase(id, { status, assignedTo, reviewerNotes, resolutionReason }, dbClient = null) {
+  const runner = dbClient ? dbClient.query.bind(dbClient) : query;
+  const updates = ['updated_at = CURRENT_TIMESTAMP'];
+  const params = [id];
+  let pIdx = 2;
+
+  if (status !== undefined) {
+    updates.push(`status = $${pIdx++}`);
+    params.push(status);
+    if (['APPROVED', 'REJECTED'].includes(status)) {
+      updates.push(`resolved_at = CURRENT_TIMESTAMP`);
+    }
+  }
+  if (assignedTo !== undefined) {
+    updates.push(`assigned_to = $${pIdx++}`);
+    params.push(assignedTo);
+  }
+  if (reviewerNotes !== undefined) {
+    updates.push(`reviewer_notes = $${pIdx++}`);
+    params.push(reviewerNotes);
+  }
+  if (resolutionReason !== undefined) {
+    updates.push(`resolution_reason = $${pIdx++}`);
+    params.push(resolutionReason);
+  }
+
+  await runner(
+    `UPDATE review_cases SET ${updates.join(', ')} WHERE id = $1`,
+    params
+  );
+
+  return getReviewCaseById(id);
+}
+
+module.exports = {
+  createReviewCase,
+  listReviewCases,
+  getReviewCaseById,
+  updateReviewCase,
+};

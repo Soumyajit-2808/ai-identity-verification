@@ -1,0 +1,146 @@
+/**
+ * Identity Deduplication & Reuse Repository
+ * Persists SHA-256 hashes of documents and normalized/salted ID numbers.
+ * Enforces transaction-level and unique-constraint deduplication across application restarts.
+ */
+
+const crypto = require('crypto');
+const uuidv4 = () => crypto.randomUUID();
+const { query } = require('../connection');
+
+/**
+ * Hash an ID number for privacy-preserving deduplication storage.
+ */
+function hashIdNumber(idNumber) {
+  if (!idNumber) return null;
+  const normalized = idNumber.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  const salt = process.env.PII_SALT || 'VERIFY_ID_SALT_2026_DEFAULT';
+  return crypto.createHmac('sha256', salt).update(normalized).digest('hex');
+}
+
+/**
+ * Mask an ID number for secure display in logs/UI (e.g., "XXXX-XXXX-1234").
+ */
+function maskIdNumber(idNumber) {
+  if (!idNumber) return '—';
+  const clean = idNumber.trim();
+  if (clean.length <= 4) return '****';
+  const lastFour = clean.slice(-4);
+  return '*'.repeat(clean.length - 4) + lastFour;
+}
+
+/**
+ * Check if the exact document file has been submitted before for this event.
+ */
+async function checkDuplicateFile(eventId, fileHash, dbClient = null) {
+  const runner = dbClient ? dbClient.query.bind(dbClient) : query;
+  const res = await runner(
+    `SELECT ir.id, ir.registration_id, ir.registered_name, ir.created_at, r.registration_name
+     FROM identity_registry ir
+     LEFT JOIN registrations r ON ir.registration_id = r.id
+     WHERE ir.event_id = $1 AND ir.document_file_hash = $2
+     LIMIT 1`,
+    [eventId, fileHash]
+  );
+
+  if (res.rows.length > 0) {
+    const row = res.rows[0];
+    return {
+      isDuplicate: true,
+      existingRegistrationId: row.registration_id,
+      registeredName: row.registered_name || row.registration_name,
+      createdAt: row.created_at,
+    };
+  }
+
+  return { isDuplicate: false };
+}
+
+/**
+ * Check if the extracted ID number has been registered by a different person in this event.
+ */
+async function checkIdentityReuse(eventId, rawIdNumber, currentRegistrationName, dbClient = null) {
+  if (!rawIdNumber) {
+    return {
+      canCheck: false,
+      reason: 'No valid ID number extracted; cannot check identity reuse.',
+    };
+  }
+
+  const idHash = hashIdNumber(rawIdNumber);
+  const runner = dbClient ? dbClient.query.bind(dbClient) : query;
+
+  const res = await runner(
+    `SELECT ir.id, ir.registration_id, ir.registered_name, ir.id_type, ir.created_at
+     FROM identity_registry ir
+     WHERE ir.event_id = $1 AND ir.id_number_hash = $2
+     LIMIT 1`,
+    [eventId, idHash]
+  );
+
+  if (res.rows.length > 0) {
+    const row = res.rows[0];
+    const prevName = (row.registered_name || '').toUpperCase().trim();
+    const currName = (currentRegistrationName || '').toUpperCase().trim();
+    const sameName = prevName === currName;
+
+    return {
+      canCheck: true,
+      isReused: true,
+      isSamePersonResubmission: sameName,
+      existingRegistrationId: row.registration_id,
+      previousName: row.registered_name,
+      idType: row.id_type,
+      createdAt: row.created_at,
+    };
+  }
+
+  return {
+    canCheck: true,
+    isReused: false,
+  };
+}
+
+/**
+ * Persist identity to the registry inside an atomic transaction.
+ */
+async function registerIdentity({
+  eventId,
+  registrationId,
+  rawIdNumber,
+  idType,
+  registeredName,
+  documentFileHash,
+}, dbClient = null) {
+  const runner = dbClient ? dbClient.query.bind(dbClient) : query;
+  const idHash = rawIdNumber ? hashIdNumber(rawIdNumber) : 'UNIDENTIFIED_' + uuidv4();
+  const maskedId = maskIdNumber(rawIdNumber);
+  const id = uuidv4();
+
+  await runner(
+    `INSERT INTO identity_registry (
+       id, event_id, registration_id, id_number_hash, id_number_masked,
+       id_type, registered_name, document_file_hash
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      id,
+      eventId,
+      registrationId,
+      idHash,
+      maskedId,
+      idType || 'UNKNOWN',
+      registeredName,
+      documentFileHash,
+    ]
+  );
+
+  return { id, idNumberHash: idHash, idNumberMasked: maskedId };
+}
+
+module.exports = {
+  hashIdNumber,
+  maskIdNumber,
+  checkDuplicateFile,
+  checkIdentityReuse,
+  registerIdentity,
+};
