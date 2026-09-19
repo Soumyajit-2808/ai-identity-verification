@@ -115,6 +115,45 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+app.get('/api/metrics', async (req, res) => {
+  try {
+    const totalResult = await query('SELECT COUNT(*) as cnt FROM verification_results');
+    const totalVerifications = parseInt(totalResult.rows[0].cnt || totalResult.rows[0].count || '0', 10);
+
+    const decisionsResult = await query(
+      'SELECT decision, COUNT(*) as cnt FROM verification_results GROUP BY decision'
+    );
+    const decisions = { ELIGIBLE: 0, INELIGIBLE: 0, REVIEW: 0 };
+    for (const row of decisionsResult.rows) {
+      if (row.decision) {
+        decisions[row.decision] = parseInt(row.cnt || row.count || '0', 10);
+      }
+    }
+
+    const reviewsResult = await query(
+      "SELECT COUNT(*) as cnt FROM review_cases WHERE status = 'OPEN'"
+    );
+    const openReviews = parseInt(reviewsResult.rows[0].cnt || reviewsResult.rows[0].count || '0', 10);
+
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      metrics: {
+        totalVerifications,
+        decisions,
+        openReviews,
+        uptimeSeconds: Math.floor(process.uptime()),
+        memoryUsageMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: `Failed to compute metrics: ${err.message}`,
+    });
+  }
+});
+
 // 7. API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/events', eventRoutes);
