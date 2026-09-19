@@ -14,6 +14,12 @@ backend/node_modules/
 # Uploaded/generated files
 uploads/
 *.log
+*.sqlite
+*.db
+ai-service/*.png
+ai-service/*.jpeg
+ai-service/*.jpg
+demo-data/raw/
 
 # OS / editor
 .DS_Store
