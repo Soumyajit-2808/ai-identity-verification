@@ -1,636 +1,269 @@
-import hashlib
-import re
-from datetime import date, datetime
+"""
+Verification Decision & Evidence Scoring Engine
+Aggregates atomic signals into explainable verification decisions with calibrated evidence and risk scores.
+"""
 
-import cv2
-import numpy as np
-from PIL import Image
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
 
-
-# In-memory duplicate registry for the prototype.
-# Later this will move to PostgreSQL.
-SEEN_DOCUMENTS = set()
-SEEN_IDENTITIES = {}
-
-
-def normalize_name(name):
-    if not name:
-        return ""
-
-    name = name.upper()
-    name = re.sub(r"[^A-Z0-9 ]", " ", name)
-    name = re.sub(r"\s+", " ", name)
-
-    return name.strip()
+from verification.normalizer import ExtractedIdentity
+from verification.name_matcher import NameMatchResult, match_names
+from verification.quality import QualityResult, analyze_image_quality
+from verification.tamper import TamperResult, analyze_tamper_risk
+from verification.face import FaceVerificationResult, verify_faces
 
 
-def names_match(ocr_name, registration_name):
-    if not ocr_name or not registration_name:
-        return None
-
-    a = normalize_name(ocr_name)
-    b = normalize_name(registration_name)
-
-    if not a or not b:
-        return False
-
-    if a == b:
-        return True
-
-    # Handles minor OCR differences.
-    a_parts = set(a.split())
-    b_parts = set(b.split())
-
-    if not a_parts or not b_parts:
-        return False
-
-    overlap = len(a_parts.intersection(b_parts))
-    similarity = overlap / max(len(a_parts), len(b_parts))
-
-    return similarity >= 0.75
+class AtomicSignal(BaseModel):
+    signal_type: str
+    status: str       # "PASSED", "REVIEW", "FAILED", "SKIPPED"
+    score: Optional[float] = None
+    reason: str
+    details: Dict[str, Any] = {}
 
 
-def calculate_age(dob_text):
-    if not dob_text:
-        return None
-
-    formats = [
-        "%d/%m/%Y",
-        "%d-%m-%Y",
-        "%Y/%m/%d",
-        "%Y-%m-%d",
-        "%d/%m/%y",
-        "%d-%m-%y",
-    ]
-
-    dob = None
-
-    for fmt in formats:
-        try:
-            dob = datetime.strptime(dob_text, fmt).date()
-            break
-        except ValueError:
-            continue
-
-    if not dob:
-        return None
-
-    today = date.today()
-
-    age = today.year - dob.year
-
-    if (today.month, today.day) < (dob.month, dob.day):
-        age -= 1
-
-    return age
+class VerificationEngineResult(BaseModel):
+    decision: str             # "ELIGIBLE", "INELIGIBLE", "REVIEW"
+    confidence_score: float   # Calibrated confidence (0.00 - 1.00)
+    evidence_score: float     # Positive corroboration weight (0.00 - 1.00)
+    risk_score: float         # Risk and anomaly indicator weight (0.00 - 1.00)
+    summary_reason: str
+    extracted_identity: ExtractedIdentity
+    signals: List[AtomicSignal]
 
 
-def check_eligibility(dob_text, min_age, max_age):
-    age = calculate_age(dob_text)
-
+def check_eligibility(
+    age: Optional[int],
+    min_age: int = 18,
+    max_age: int = 100
+) -> AtomicSignal:
     if age is None:
-        return {
-            "status": "review",
-            "age": None,
-            "reason": "Date of birth could not be reliably extracted."
-        }
+        return AtomicSignal(
+            signal_type="ELIGIBILITY",
+            status="REVIEW",
+            score=0.0,
+            reason="Date of birth could not be reliably extracted to calculate age eligibility.",
+            details={"min_age": min_age, "max_age": max_age, "calculated_age": None}
+        )
 
     if age < min_age:
-        return {
-            "status": "failed",
-            "age": age,
-            "reason": f"Registrant is below the configured minimum age of {min_age}."
-        }
+        return AtomicSignal(
+            signal_type="ELIGIBILITY",
+            status="FAILED",
+            score=0.0,
+            reason=f"Applicant age ({age}) is below the minimum permitted age of {min_age}.",
+            details={"min_age": min_age, "max_age": max_age, "calculated_age": age}
+        )
 
     if age > max_age:
-        return {
-            "status": "failed",
-            "age": age,
-            "reason": f"Registrant is above the configured maximum age of {max_age}."
-        }
-
-    return {
-        "status": "passed",
-        "age": age,
-        "reason": "Age falls within the configured eligibility range."
-    }
-
-
-def calculate_document_hash(contents):
-    return hashlib.sha256(contents).hexdigest()
-
-
-def check_duplicate(contents):
-    document_hash = calculate_document_hash(contents)
-
-    if document_hash in SEEN_DOCUMENTS:
-        return {
-            "status": "detected",
-            "hash": document_hash,
-            "reason": "The exact same document file has already been submitted."
-        }
-
-    SEEN_DOCUMENTS.add(document_hash)
-
-    return {
-        "status": "not_detected",
-        "hash": document_hash,
-        "reason": "No identical document submission was detected."
-    }
-
-def check_identity_duplicate(identity):
-    """
-    Detect reuse of the same extracted identity information,
-    even when the uploaded image itself is different.
-    """
-
-    id_number = identity.get("id_number")
-
-    if not id_number:
-        return {
-            "status": "review",
-            "reason": "No reliable ID number was extracted, so identity reuse could not be checked."
-        }
-
-    normalized_id = re.sub(r"[^A-Z0-9]", "", id_number.upper())
-
-    if normalized_id in SEEN_IDENTITIES:
-        previous_name = SEEN_IDENTITIES[normalized_id]
-
-        return {
-            "status": "detected",
-            "id_number": id_number,
-            "previous_name": previous_name,
-            "reason": "The extracted ID number has already been associated with a previous submission."
-        }
-
-    SEEN_IDENTITIES[normalized_id] = identity.get("name")
-
-    return {
-        "status": "not_detected",
-        "id_number": id_number,
-        "reason": "The extracted ID number has not been seen in previous submissions."
-    }
-
-
-def check_image_quality(contents):
-    try:
-        image_array = np.frombuffer(contents, dtype=np.uint8)
-        image = cv2.imdecode(image_array, cv2.IMREAD_GRAYSCALE)
-
-        if image is None:
-            return {
-                "status": "failed",
-                "blur_score": 0,
-                "brightness": 0,
-                "reason": "Image could not be decoded."
-            }
-
-        height, width = image.shape
-
-        # Laplacian variance is a common blur indicator.
-        blur_score = float(cv2.Laplacian(image, cv2.CV_64F).var())
-
-        brightness = float(np.mean(image))
-
-        problems = []
-
-        if width < 700 or height < 400:
-            problems.append("image resolution is low")
-
-        if blur_score < 60:
-            problems.append("image appears blurry")
-
-        if brightness < 35:
-            problems.append("image is too dark")
-
-        if brightness > 235:
-            problems.append("image is overexposed")
-
-        if problems:
-            return {
-                "status": "failed",
-                "width": width,
-                "height": height,
-                "blur_score": round(blur_score, 2),
-                "brightness": round(brightness, 2),
-                "reason": "; ".join(problems)
-            }
-
-        return {
-            "status": "passed",
-            "width": width,
-            "height": height,
-            "blur_score": round(blur_score, 2),
-            "brightness": round(brightness, 2),
-            "reason": "Image quality is sufficient for automated processing."
-        }
-
-    except Exception as error:
-        return {
-            "status": "review",
-            "reason": f"Image quality check could not be completed: {error}"
-        }
-
-
-def check_tamper_risk(contents):
-    """
-    Conservative tamper-risk analysis.
-
-    This does NOT prove that a document is fake.
-    It combines several weak signals and routes suspicious
-    documents to manual review.
-    """
-
-    signals = []
-
-    try:
-        image = Image.open(__import__("io").BytesIO(contents))
-
-        # -------------------------------------------------
-        # 1. Metadata analysis
-        # -------------------------------------------------
-
-        exif = image.getexif()
-
-        if exif:
-            editing_software = []
-
-            for key, value in exif.items():
-                if isinstance(value, str):
-                    value_lower = value.lower()
-
-                    if any(
-                        word in value_lower
-                        for word in [
-                            "photoshop",
-                            "gimp",
-                            "illustrator",
-                            "canva",
-                            "paint.net",
-                        ]
-                    ):
-                        editing_software.append(value)
-
-            if editing_software:
-                signals.append(
-                    "editing software metadata detected"
-                )
-
-        # -------------------------------------------------
-        # 2. JPEG recompression / ELA-style signal
-        # -------------------------------------------------
-
-        if image.format == "JPEG":
-            import io
-
-            original = image.convert("RGB")
-
-            buffer = io.BytesIO()
-
-            original.save(
-                buffer,
-                format="JPEG",
-                quality=90
-            )
-
-            buffer.seek(0)
-
-            recompressed = Image.open(buffer).convert("RGB")
-
-            original_array = np.asarray(original).astype(np.int16)
-            recompressed_array = np.asarray(
-                recompressed
-            ).astype(np.int16)
-
-            difference = np.abs(
-                original_array - recompressed_array
-            )
-
-            ela_score = float(np.mean(difference))
-
-            if ela_score > 18:
-                signals.append(
-                    f"JPEG recompression anomaly detected (ELA score {ela_score:.2f})"
-                )
-
-        # -------------------------------------------------
-        # 3. Image structure sanity check
-        # -------------------------------------------------
-
-        width, height = image.size
-
-        if width < 700 or height < 400:
-            signals.append(
-                "document resolution is unusually low"
-            )
-
-        # Extremely unusual aspect ratios can indicate
-        # cropping or incomplete document capture.
-        aspect_ratio = width / height
-
-        if aspect_ratio < 0.5 or aspect_ratio > 3.5:
-            signals.append(
-                "unusual document aspect ratio detected"
-            )
-
-    except Exception:
-        signals.append(
-            "document structure could not be fully inspected"
+        return AtomicSignal(
+            signal_type="ELIGIBILITY",
+            status="FAILED",
+            score=0.0,
+            reason=f"Applicant age ({age}) exceeds the maximum permitted age of {max_age}.",
+            details={"min_age": min_age, "max_age": max_age, "calculated_age": age}
         )
 
-    # -----------------------------------------------------
-    # Risk decision
-    # -----------------------------------------------------
+    return AtomicSignal(
+        signal_type="ELIGIBILITY",
+        status="PASSED",
+        score=1.0,
+        reason=f"Applicant age ({age}) satisfies the configured eligibility requirement ({min_age} to {max_age} years).",
+        details={"min_age": min_age, "max_age": max_age, "calculated_age": age}
+    )
 
-    if signals:
-        return {
-            "status": "review",
-            "risk": "medium",
-            "signals": signals,
-            "reason": (
-                "Potential document manipulation or "
-                "structural anomalies were detected; "
-                "manual review is recommended."
-            )
-        }
 
-    return {
-        "status": "passed",
-        "risk": "low",
-        "signals": [],
-        "reason": (
-            "No significant tampering-risk signals "
-            "were detected by the available checks."
-        )
+def evaluate_verification(
+    document_bytes: bytes,
+    extracted: ExtractedIdentity,
+    registration_name: str,
+    min_age: int = 18,
+    max_age: int = 100,
+    selfie_bytes: Optional[bytes] = None,
+    require_selfie: bool = False,
+    strict_name_matching: bool = False,
+) -> VerificationEngineResult:
+    signals: List[AtomicSignal] = []
+
+    # 1. OCR Extraction Completeness Signal
+    ocr_details = {
+        "has_name": bool(extracted.name),
+        "has_dob": bool(extracted.date_of_birth),
+        "has_id_number": bool(extracted.id_number),
+        "id_type": extracted.id_type,
     }
-
-def calculate_confidence(
-    ocr_result,
-    quality_result,
-    tamper_result,
-    duplicate_result,
-    identity_duplicate_result,
-    eligibility_result,
-    name_match,
-    face_match_result
-):
-    score = 0.50
-
-    if ocr_result.get("fields", {}).get("name"):
-        score += 0.10
-
-    if ocr_result.get("fields", {}).get("date_of_birth"):
-        score += 0.10
-
-    if ocr_result.get("fields", {}).get("id_number"):
-        score += 0.10
-
-    if quality_result.get("status") == "passed":
-        score += 0.05
-    elif quality_result.get("status") == "failed":
-        score -= 0.20
-
-    if tamper_result.get("risk") == "low":
-        score += 0.05
-    elif tamper_result.get("risk") == "medium":
-        score -= 0.10
-
-    if duplicate_result.get("status") == "not_detected":
-        score += 0.05
+    if extracted.name and extracted.date_of_birth:
+        ocr_status = "PASSED"
+        ocr_score = 1.0 if extracted.id_number else 0.85
+        ocr_reason = f"Essential identity fields (name, date of birth) were extracted successfully. Document type identified as {extracted.id_type}."
     else:
-        score -= 0.25
+        ocr_status = "REVIEW"
+        ocr_score = 0.40
+        missing = []
+        if not extracted.name: missing.append("name")
+        if not extracted.date_of_birth: missing.append("date of birth")
+        ocr_reason = f"OCR extraction was incomplete; could not reliably extract: {', '.join(missing)}."
 
-    if identity_duplicate_result.get("status") == "not_detected":
-        score += 0.05
-    elif identity_duplicate_result.get("status") == "detected":
-        score -= 0.25
+    signals.append(AtomicSignal(
+        signal_type="OCR",
+        status=ocr_status,
+        score=ocr_score,
+        reason=ocr_reason,
+        details=ocr_details
+    ))
 
-    if eligibility_result.get("status") == "passed":
-        score += 0.05
-    elif eligibility_result.get("status") == "failed":
-        score -= 0.25
+    # 2. Image Quality Signal
+    quality_res = analyze_image_quality(document_bytes)
+    signals.append(AtomicSignal(
+        signal_type="QUALITY",
+        status=quality_res.status,
+        score=round(min(1.0, quality_res.blur_score / 150.0), 2),
+        reason=quality_res.reason,
+        details={
+            "blur_score": quality_res.blur_score,
+            "brightness": quality_res.brightness_score,
+            "contrast": quality_res.contrast_score,
+            "glare_ratio": quality_res.glare_ratio,
+            "resolution": f"{quality_res.width}x{quality_res.height}",
+            "issues": quality_res.issues,
+        }
+    ))
 
-    if name_match is True:
-        score += 0.05
-    elif name_match is False:
-        score -= 0.15
+    # 3. Tamper-Risk Signal
+    tamper_res = analyze_tamper_risk(document_bytes)
+    tamper_score = 1.0 if tamper_res.risk_level == "LOW" else (0.50 if tamper_res.risk_level == "MEDIUM" else 0.20)
+    signals.append(AtomicSignal(
+        signal_type="TAMPER",
+        status=tamper_res.status,
+        score=tamper_score,
+        reason=tamper_res.reason,
+        details={
+            "risk_level": tamper_res.risk_level,
+            "signals": tamper_res.signals,
+            "ela_score": tamper_res.ela_score,
+            "editing_tools": tamper_res.editing_tools_detected,
+        }
+    ))
 
-    if face_match_result.get("status") == "passed":
-        score += 0.05
-    elif face_match_result.get("status") == "review":
-        score -= 0.20
+    # 4. Eligibility Check Signal
+    eligibility_signal = check_eligibility(extracted.calculated_age, min_age, max_age)
+    signals.append(eligibility_signal)
 
-    return round(max(0.0, min(0.99, score)), 2)
+    # 5. Registration Name Match Signal
+    name_res = match_names(extracted.name, registration_name, strict=strict_name_matching)
+    signals.append(AtomicSignal(
+        signal_type="NAME_MATCH",
+        status="PASSED" if name_res.matched else "REVIEW",
+        score=name_res.score,
+        reason=f"Registration name '{registration_name}' matched extracted name '{extracted.name}' (score: {name_res.score}, method: {name_res.method})."
+               if name_res.matched else
+               f"Registration name '{registration_name}' does not sufficiently match extracted name '{extracted.name}' (similarity {name_res.score} < threshold {name_res.threshold}).",
+        details=name_res.details
+    ))
 
+    # 6. Biometric Face Match Signal
+    face_res = verify_faces(document_bytes, selfie_bytes)
+    if face_res.status == "NOT_PROVIDED":
+        face_signal_status = "REVIEW" if require_selfie else "SKIPPED"
+        face_reason = "Mandatory selfie was not provided." if require_selfie else "Selfie was not provided; face verification was skipped."
+    else:
+        face_signal_status = face_res.status
+        face_reason = face_res.reason
 
-def determine_decision(
-    quality_result,
-    tamper_result,
-    duplicate_result,
-    identity_duplicate_result,
-    eligibility_result,
-    ocr_result,
-    name_match,
-    face_match_result
-):
-    fields = ocr_result.get("fields", {})
+    signals.append(AtomicSignal(
+        signal_type="FACE_MATCH",
+        status=face_signal_status,
+        score=face_res.similarity_score,
+        reason=face_reason,
+        details={
+            "match": face_res.match,
+            "state": face_res.state,
+            "distance": face_res.distance,
+            "threshold": face_res.threshold,
+            "liveness_verified": face_res.liveness_verified,
+        }
+    ))
 
-    if duplicate_result.get("status") == "detected":
-        return "REVIEW"
+    # -------------------------------------------------------------
+    # Multi-Signal Evidence & Risk Scoring
+    # -------------------------------------------------------------
+    # Evidence score represents positive corroboration (0.0 to 1.0)
+    pos_evidence = 0.0
+    if ocr_status == "PASSED": pos_evidence += 0.25
+    if quality_res.status == "PASSED": pos_evidence += 0.15
+    if tamper_res.risk_level == "LOW": pos_evidence += 0.15
+    if eligibility_signal.status == "PASSED": pos_evidence += 0.20
+    if name_res.matched: pos_evidence += 0.15
+    if face_res.status == "PASSED": pos_evidence += 0.10
+    elif face_res.status in ("SKIPPED", "NOT_PROVIDED") and not require_selfie: pos_evidence += 0.10
 
-    if identity_duplicate_result.get("status") == "detected":
-        return "REVIEW"
+    evidence_score = round(min(1.0, pos_evidence), 2)
 
-    if quality_result.get("status") == "failed":
-        return "REVIEW"
+    # Risk score represents presence of anomalies and defects (0.0 to 1.0)
+    risk = 0.0
+    if quality_res.status == "FAILED": risk += 0.40
+    elif quality_res.status == "REVIEW": risk += 0.20
 
-    if tamper_result.get("risk") == "medium":
-        return "REVIEW"
+    if tamper_res.risk_level == "HIGH": risk += 0.50
+    elif tamper_res.risk_level == "MEDIUM": risk += 0.25
 
-    if eligibility_result.get("status") == "failed":
-        return "INELIGIBLE"
+    if not name_res.matched: risk += 0.35
+    if face_res.status == "REVIEW": risk += 0.30
 
-    if eligibility_result.get("status") == "review":
-        return "REVIEW"
+    risk_score = round(min(1.0, risk), 2)
 
-    if not fields.get("name") or not fields.get("date_of_birth"):
-        return "REVIEW"
+    # Calibrated confidence score
+    confidence_score = round(max(0.10, min(0.98, evidence_score * (1.0 - (risk_score * 0.7)))), 2)
 
-    if name_match is False:
-        return "REVIEW"
+    # -------------------------------------------------------------
+    # Decision Policy Synthesis
+    # -------------------------------------------------------------
+    # Rule 1: Eligibility failure is absolute INELIGIBLE
+    if eligibility_signal.status == "FAILED":
+        decision = "INELIGIBLE"
+        summary_reason = eligibility_signal.reason
 
-    if face_match_result.get("status") == "review":
-        return "REVIEW"
+    # Rule 2: Critical issues route to REVIEW
+    elif (
+        ocr_status == "REVIEW" or
+        quality_res.status in ("FAILED", "REVIEW") or
+        tamper_res.risk_level in ("MEDIUM", "HIGH") or
+        not name_res.matched or
+        face_res.status in ("FAILED", "REVIEW") or
+        (require_selfie and face_res.status == "NOT_PROVIDED") or
+        risk_score >= 0.30
+    ):
+        decision = "REVIEW"
+        reasons = []
+        if ocr_status == "REVIEW":
+            reasons.append("incomplete OCR field extraction")
+        if quality_res.status != "PASSED":
+            reasons.append("suboptimal document quality")
+        if tamper_res.risk_level != "LOW":
+            reasons.append("tampering or structural anomaly flags")
+        if not name_res.matched:
+            reasons.append("registration name discrepancy")
+        if face_res.status == "REVIEW":
+            reasons.append("facial verification mismatch or detection anomaly")
+        if require_selfie and face_res.status == "NOT_PROVIDED":
+            reasons.append("missing mandatory selfie")
 
-    return "ELIGIBLE"
+        summary_reason = f"Manual operator review is required due to: {', '.join(reasons)}."
 
-
-def build_reason(
-    decision,
-    quality_result,
-    tamper_result,
-    duplicate_result,
-    identity_duplicate_result,
-    eligibility_result,
-    name_match,
-    face_match_result
-):
-    reasons = []
-
-    if decision == "ELIGIBLE":
-        reasons.append("identity fields were successfully extracted")
-
-        if quality_result.get("status") == "passed":
-            reasons.append("image quality passed")
-
-        if duplicate_result.get("status") == "not_detected":
-            reasons.append("no identical duplicate was detected")
-
-        if identity_duplicate_result.get("status") == "not_detected":
-            reasons.append("no identity reuse was detected")
-
-        if tamper_result.get("risk") == "low":
-            reasons.append("no basic tampering indicators were detected")
-
-        if eligibility_result.get("status") == "passed":
-            reasons.append("age eligibility check passed")
-
-        if name_match is True:
-            reasons.append("registration name matches the extracted name")
-
-        if face_match_result.get("status") == "passed":
-            reasons.append("selfie face matches the identity document")
-        elif face_match_result.get("status") == "not_provided":
-            reasons.append("face verification was skipped because no selfie was provided")
-
-        return "Automated verification passed because " + ", ".join(reasons) + "."
-
-    if decision == "INELIGIBLE":
-        return eligibility_result.get(
-            "reason",
-            "The registration did not satisfy the configured eligibility rules."
+    # Rule 3: All verified clean
+    else:
+        decision = "ELIGIBLE"
+        summary_reason = (
+            "Automated verification passed successfully. Identity document fields were extracted, "
+            "document quality is acceptable, no tampering anomalies were observed, age eligibility was verified, "
+            "and registration name matches the identity document."
         )
 
-    # REVIEW reasons are collected together so important signals
-    # such as face mismatch are not hidden by duplicate detection.
-    if duplicate_result.get("status") == "detected":
-        reasons.append("the document matches a previously submitted file")
-
-    if identity_duplicate_result.get("status") == "detected":
-        reasons.append("the extracted identity has already been associated with a previous submission")
-
-    if quality_result.get("status") == "failed":
-        reasons.append("document image quality is insufficient")
-
-    if tamper_result.get("risk") == "medium":
-        reasons.append("potential document-tampering indicators were detected")
-
-    if name_match is False:
-        reasons.append("registration name does not sufficiently match the extracted document name")
-
-    if face_match_result.get("status") == "review":
-        reasons.append("selfie face does not sufficiently match the identity document")
-
-    if reasons:
-        return (
-            "Manual review is required because "
-            + ", ".join(reasons)
-            + "."
-        )
-
-    return "The system could not establish sufficient confidence for automatic approval; manual review is recommended."
-def verify_document(
-    contents,
-    ocr_result,
-    registration_name=None,
-    min_age=18,
-    max_age=100,
-    face_match_result=None
-):
-    if face_match_result is None:
-        face_match_result = {
-            "status": "not_provided",
-            "match": None,
-            "similarity": None,
-            "reason": "Selfie was not provided; face verification was skipped."
-        }
-
-    quality_result = check_image_quality(contents)
-
-    tamper_result = check_tamper_risk(contents)
-
-    duplicate_result = check_duplicate(contents)
-
-    identity_duplicate_result = check_identity_duplicate(
-        ocr_result.get("fields", {})
+    return VerificationEngineResult(
+        decision=decision,
+        confidence_score=confidence_score,
+        evidence_score=evidence_score,
+        risk_score=risk_score,
+        summary_reason=summary_reason,
+        extracted_identity=extracted,
+        signals=signals,
     )
-
-    eligibility_result = check_eligibility(
-        ocr_result.get("fields", {}).get("date_of_birth"),
-        min_age,
-        max_age
-    )
-
-    extracted_name = ocr_result.get("fields", {}).get("name")
-
-    name_match = names_match(
-        extracted_name,
-        registration_name
-    )
-
-    decision = determine_decision(
-        quality_result,
-        tamper_result,
-        duplicate_result,
-        identity_duplicate_result,
-        eligibility_result,
-        ocr_result,
-        name_match,
-        face_match_result
-    )
-
-    confidence = calculate_confidence(
-        ocr_result,
-        quality_result,
-        tamper_result,
-        duplicate_result,
-        identity_duplicate_result,
-        eligibility_result,
-        name_match,
-        face_match_result
-    )
-
-    reason = build_reason(
-        decision,
-        quality_result,
-        tamper_result,
-        duplicate_result,
-        identity_duplicate_result,
-        eligibility_result,
-        name_match,
-        face_match_result
-    )
-
-    return {
-        "decision": decision,
-        "confidence": confidence,
-        "reason": reason,
-
-        "identity": ocr_result.get("fields", {}),
-
-        "checks": {
-            "ocr": "passed" if (
-                ocr_result.get("fields", {}).get("name")
-                and ocr_result.get("fields", {}).get("date_of_birth")
-            ) else "review",
-
-            "quality": quality_result,
-            "tamper_risk": tamper_result,
-            "duplicate": duplicate_result,
-            "identity_duplicate": identity_duplicate_result,
-            "eligibility": eligibility_result,
-            "name_match": name_match,
-            "face_match": face_match_result
-        }
-    }

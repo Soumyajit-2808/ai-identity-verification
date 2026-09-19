@@ -1,78 +1,162 @@
+"""
+Biometric Face Verification Module
+Performs 2D facial embedding comparison with multi-state face presence checks.
+Explicitly identifies spoofing and presentation attack limitations.
+"""
+
+from typing import Optional, Dict, Any, Tuple
 import cv2
 import numpy as np
-from deepface import DeepFace
+from pydantic import BaseModel
 
 
-def compare_faces(document_bytes, selfie_bytes):
-    """
-    Compare the face in an identity document with a selfie.
-    """
+class FaceVerificationResult(BaseModel):
+    status: str       # "PASSED", "REVIEW", "FAILED", "NOT_PROVIDED", "UNAVAILABLE"
+    match: Optional[bool] = None
+    state: str        # "MATCH_CONFIRMED", "MISMATCH", "NO_FACE_IN_DOCUMENT", "NO_FACE_IN_SELFIE", etc.
+    distance: Optional[float] = None
+    threshold: float = 0.30
+    similarity_score: Optional[float] = None
+    liveness_verified: bool = False
+    reason: str
+    disclaimer: str = (
+        "2D facial verification compares facial geometric features between the document photo and selfie. "
+        "It does not perform active 3D liveness or presentation attack detection."
+    )
 
+
+def count_faces_opencv(image_bgr: np.ndarray) -> int:
+    """Use OpenCV Haar Cascade as a lightweight pre-check for face count."""
     try:
-        document_array = np.frombuffer(document_bytes, dtype=np.uint8)
-        selfie_array = np.frombuffer(selfie_bytes, dtype=np.uint8)
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=4,
+            minSize=(30, 30)
+        )
+        return len(faces)
+    except Exception:
+        return 1  # Fallback to letting DeepFace handle detection
 
-        document_image = cv2.imdecode(document_array, cv2.IMREAD_COLOR)
-        selfie_image = cv2.imdecode(selfie_array, cv2.IMREAD_COLOR)
 
-        if document_image is None:
-            return {
-                "status": "review",
-                "match": None,
-                "similarity": None,
-                "reason": "Identity document image could not be decoded."
-            }
-
-        if selfie_image is None:
-            return {
-                "status": "review",
-                "match": None,
-                "similarity": None,
-                "reason": "Selfie image could not be decoded."
-            }
-
-        result = DeepFace.verify(
-    document_image,
-    selfie_image,
-    model_name="Facenet512",
-    detector_backend="opencv",
-    enforce_detection=True
-)
-
-        distance = float(result.get("distance", 1.0))
-        threshold = float(result.get("threshold", 0.30))
-
-        similarity = max(
-            0.0,
-            min(
-                1.0,
-                1.0 - (distance / max(threshold * 2, 0.001))
-            )
+def verify_faces(
+    document_bytes: bytes,
+    selfie_bytes: Optional[bytes] = None,
+    enforce_biometrics: bool = False
+) -> FaceVerificationResult:
+    """
+    Compare document identity photo against selfie.
+    Handles no-face, multiple-face, and distance thresholds.
+    """
+    if not selfie_bytes:
+        return FaceVerificationResult(
+            status="NOT_PROVIDED",
+            match=None,
+            state="NOT_PROVIDED",
+            reason="Selfie was not provided; biometric face verification was skipped."
         )
 
-        verified = bool(result.get("verified", False))
+    try:
+        doc_arr = np.frombuffer(document_bytes, dtype=np.uint8)
+        selfie_arr = np.frombuffer(selfie_bytes, dtype=np.uint8)
 
-        if verified:
-            return {
-                "status": "passed",
-                "match": True,
-                "similarity": round(similarity, 2),
-                "distance": round(distance, 4),
-                "reason": "The selfie face matches the face detected in the identity document."
-            }
+        doc_img = cv2.imdecode(doc_arr, cv2.IMREAD_COLOR)
+        selfie_img = cv2.imdecode(selfie_arr, cv2.IMREAD_COLOR)
 
-        return {
-            "status": "review",
-            "match": False,
-            "similarity": round(similarity, 2),
-            "distance": round(distance, 4),
-            "reason": "The selfie face does not sufficiently match the identity document face."
-        }
+        if doc_img is None:
+            return FaceVerificationResult(
+                status="FAILED",
+                match=None,
+                state="CORRUPT_DOCUMENT_IMAGE",
+                reason="The document image could not be decoded for face verification."
+            )
 
-    except Exception as error:
-        return {
-            "status": "review",
-            "match": None,
-            "similarity": None,
-            "reason": f"Face verification could not be completed: {str(error)}"
-        }
+        if selfie_img is None:
+            return FaceVerificationResult(
+                status="FAILED",
+                match=None,
+                state="CORRUPT_SELFIE_IMAGE",
+                reason="The selfie image could not be decoded for face verification."
+            )
+
+        # Pre-check face counts
+        doc_face_count = count_faces_opencv(doc_img)
+        selfie_face_count = count_faces_opencv(selfie_img)
+
+        if selfie_face_count > 1:
+            return FaceVerificationResult(
+                status="REVIEW",
+                match=False,
+                state="MULTIPLE_FACES_IN_SELFIE",
+                reason=f"Multiple faces ({selfie_face_count}) were detected in the selfie. Only one person must be present."
+            )
+
+        # Run DeepFace verification
+        try:
+            from deepface import DeepFace
+            result = DeepFace.verify(
+                img1_path=doc_img,
+                img2_path=selfie_img,
+                model_name="Facenet512",
+                detector_backend="opencv",
+                enforce_detection=True
+            )
+
+            distance = float(result.get("distance", 1.0))
+            threshold = float(result.get("threshold", 0.30))
+            verified = bool(result.get("verified", False))
+
+            # Calibrate similarity representation (bounded 0.0 to 1.0)
+            similarity = max(0.0, min(1.0, 1.0 - (distance / max(threshold * 2.0, 0.01))))
+            similarity = round(similarity, 2)
+
+            if verified:
+                return FaceVerificationResult(
+                    status="PASSED",
+                    match=True,
+                    state="MATCH_CONFIRMED",
+                    distance=round(distance, 4),
+                    threshold=threshold,
+                    similarity_score=similarity,
+                    liveness_verified=False,
+                    reason=f"Selfie face matches the document photo (distance {distance:.4f} <= threshold {threshold:.2f})."
+                )
+            else:
+                return FaceVerificationResult(
+                    status="REVIEW",
+                    match=False,
+                    state="MISMATCH",
+                    distance=round(distance, 4),
+                    threshold=threshold,
+                    similarity_score=similarity,
+                    liveness_verified=False,
+                    reason=f"Selfie face does not sufficiently match the document photo (distance {distance:.4f} > threshold {threshold:.2f})."
+                )
+
+        except ValueError as val_err:
+            err_msg = str(val_err).lower()
+            if "face could not be detected" in err_msg:
+                # Determine which image was missing the face
+                return FaceVerificationResult(
+                    status="REVIEW",
+                    match=None,
+                    state="FACE_NOT_DETECTED",
+                    reason="A clear human face could not be detected in either the ID document or the selfie photo."
+                )
+            return FaceVerificationResult(
+                status="REVIEW",
+                match=None,
+                state="DETECTION_ERROR",
+                reason=f"Face detection could not complete: {str(val_err)}"
+            )
+
+    except Exception as err:
+        return FaceVerificationResult(
+            status="UNAVAILABLE",
+            match=None,
+            state="SERVICE_ERROR",
+            reason=f"Biometric verification service exception: {str(err)}"
+        )
