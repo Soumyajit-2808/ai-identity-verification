@@ -81,6 +81,7 @@ def evaluate_verification(
     selfie_bytes: Optional[bytes] = None,
     require_selfie: bool = False,
     strict_name_matching: bool = False,
+    allowed_id_types: Optional[List[str]] = None,
 ) -> VerificationEngineResult:
     signals: List[AtomicSignal] = []
 
@@ -183,6 +184,31 @@ def evaluate_verification(
         }
     ))
 
+    # 7. Document Type Permitted Signal
+    doc_type_status = "PASSED"
+    if allowed_id_types:
+        id_type = (extracted.id_type or "UNKNOWN").upper()
+        if id_type in allowed_id_types:
+            doc_type_status = "PASSED"
+            doc_type_score = 1.0
+            doc_type_reason = f"Extracted document type '{id_type}' is permitted for this event."
+        elif id_type == "UNKNOWN":
+            doc_type_status = "REVIEW"
+            doc_type_score = 0.40
+            doc_type_reason = "Document type could not be definitively recognized; manual review required."
+        else:
+            doc_type_status = "REVIEW"
+            doc_type_score = 0.0
+            doc_type_reason = f"Document type '{id_type}' is not among permitted ID types for this event: {', '.join(allowed_id_types)}."
+
+        signals.append(AtomicSignal(
+            signal_type="DOCUMENT_TYPE",
+            status=doc_type_status,
+            score=doc_type_score,
+            reason=doc_type_reason,
+            details={"extracted_id_type": id_type, "allowed_id_types": allowed_id_types}
+        ))
+
     # -------------------------------------------------------------
     # Multi-Signal Evidence & Risk Scoring
     # -------------------------------------------------------------
@@ -194,6 +220,7 @@ def evaluate_verification(
     if eligibility_signal.status == "PASSED": pos_evidence += 0.25
     if name_res.matched: pos_evidence += 0.20
     if face_res.status == "PASSED": pos_evidence += 0.15
+    if doc_type_status == "PASSED" and allowed_id_types: pos_evidence += 0.10
 
     evidence_score = round(min(1.0, pos_evidence), 2)
 
@@ -208,6 +235,8 @@ def evaluate_verification(
     if not name_res.matched: risk += 0.35
     if face_res.status == "FAILED": risk += 0.45
     elif face_res.status == "REVIEW": risk += 0.30
+
+    if doc_type_status == "REVIEW": risk += 0.35
 
     risk_score = round(min(1.0, risk), 2)
 
@@ -229,6 +258,7 @@ def evaluate_verification(
         tamper_res.risk_level in ("MEDIUM", "HIGH") or
         not name_res.matched or
         face_res.status in ("FAILED", "REVIEW") or
+        doc_type_status == "REVIEW" or
         (require_selfie and face_res.status == "NOT_PROVIDED") or
         risk_score >= 0.30
     ):
@@ -244,6 +274,8 @@ def evaluate_verification(
             reasons.append("registration name discrepancy")
         if face_res.status in ("FAILED", "REVIEW"):
             reasons.append("facial verification mismatch or detection anomaly")
+        if doc_type_status == "REVIEW":
+            reasons.append("unsupported or unrecognized document type")
         if require_selfie and face_res.status == "NOT_PROVIDED":
             reasons.append("missing mandatory selfie")
 

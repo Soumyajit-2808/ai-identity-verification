@@ -16,7 +16,7 @@ function hashIdNumber(idNumber) {
   const normalized = idNumber.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   const salt = process.env.PII_SALT || 'VERIFY_ID_SALT_2026_DEFAULT';
   if (process.env.NODE_ENV === 'production' && salt === 'VERIFY_ID_SALT_2026_DEFAULT') {
-    console.warn('[Security Warning] Default PII_SALT is being used in production. Set PII_SALT in your environment.');
+    throw new Error('[Fatal Security Error] PII_SALT environment variable must be set to a cryptographically random value in production.');
   }
   return crypto.createHmac('sha256', salt).update(normalized).digest('hex');
 }

@@ -14,7 +14,8 @@ router.get('/', requireAuth, requireRole(['admin']), async (req, res, next) => {
     const logs = await listAuditLogs({
       entityType: entityType || null,
       entityId: entityId || null,
-      limit: limit ? Number(limit) : 100,
+      organizationId: req.user.organization_id || null,
+      limit: limit ? Math.min(100, Math.max(1, Number(limit))) : 100,
     });
     res.json({ success: true, count: logs.length, logs });
   } catch (err) {

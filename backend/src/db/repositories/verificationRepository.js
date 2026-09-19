@@ -81,28 +81,35 @@ async function saveVerificationSignals(resultId, signalsArray, dbClient = null) 
   }
 }
 
-async function getVerificationHistory(eventId = null, limit = 50) {
+async function getVerificationHistory({ eventId = null, organizationId = null, limit = 50 } = {}) {
   let queryText = `
     SELECT vr.id as result_id, vr.decision, vr.confidence_score, vr.risk_score,
            vr.summary_reason, vr.extracted_identity_json, vr.created_at,
            req.id as request_id, req.status as request_status,
            reg.id as registration_id, reg.registration_name, reg.email,
-           ev.id as event_id, ev.name as event_name, ev.code as event_code,
+           ev.id as event_id, ev.name as event_name, ev.code as event_code, ev.organization_id,
            rc.id as review_case_id, rc.status as review_case_status
     FROM verification_results vr
     JOIN verification_requests req ON vr.request_id = req.id
     JOIN registrations reg ON vr.registration_id = reg.id
     JOIN events ev ON req.event_id = ev.id
     LEFT JOIN review_cases rc ON vr.id = rc.result_id
+    WHERE 1=1
   `;
   const params = [];
+  let pIdx = 1;
+
+  if (organizationId) {
+    queryText += ` AND ev.organization_id = $${pIdx++} `;
+    params.push(organizationId);
+  }
 
   if (eventId) {
-    queryText += ` WHERE ev.id = $1 `;
+    queryText += ` AND ev.id = $${pIdx++} `;
     params.push(eventId);
   }
 
-  queryText += ` ORDER BY vr.created_at DESC LIMIT $${params.length + 1}`;
+  queryText += ` ORDER BY vr.created_at DESC LIMIT $${pIdx}`;
   params.push(limit);
 
   const res = await query(queryText, params);
@@ -112,22 +119,27 @@ async function getVerificationHistory(eventId = null, limit = 50) {
   }));
 }
 
-async function getVerificationDetails(requestId) {
-  const res = await query(
-    `SELECT vr.id as result_id, vr.decision, vr.confidence_score, vr.risk_score,
-            vr.evidence_score, vr.summary_reason, vr.extracted_identity_json, vr.created_at,
-            req.id as request_id, req.status as request_status, req.request_ip,
-            reg.id as registration_id, reg.registration_name, reg.email, reg.phone,
-            ev.id as event_id, ev.name as event_name, ev.code as event_code,
-            ev.min_age, ev.max_age
-     FROM verification_results vr
-     JOIN verification_requests req ON vr.request_id = req.id
-     JOIN registrations reg ON vr.registration_id = reg.id
-     JOIN events ev ON req.event_id = ev.id
-     WHERE req.id = $1`,
-    [requestId]
-  );
+async function getVerificationDetails(requestId, organizationId = null) {
+  let queryText = `
+    SELECT vr.id as result_id, vr.decision, vr.confidence_score, vr.risk_score,
+           vr.evidence_score, vr.summary_reason, vr.extracted_identity_json, vr.created_at,
+           req.id as request_id, req.status as request_status, req.request_ip,
+           reg.id as registration_id, reg.registration_name, reg.email, reg.phone,
+           ev.id as event_id, ev.name as event_name, ev.code as event_code, ev.organization_id,
+           ev.min_age, ev.max_age
+    FROM verification_results vr
+    JOIN verification_requests req ON vr.request_id = req.id
+    JOIN registrations reg ON vr.registration_id = reg.id
+    JOIN events ev ON req.event_id = ev.id
+    WHERE req.id = $1
+  `;
+  const params = [requestId];
+  if (organizationId) {
+    queryText += ` AND ev.organization_id = $2`;
+    params.push(organizationId);
+  }
 
+  const res = await query(queryText, params);
   if (res.rows.length === 0) return null;
   const result = res.rows[0];
 
@@ -148,9 +160,9 @@ async function getVerificationDetails(requestId) {
     details: JSON.parse(s.raw_details_json || '{}'),
   }));
 
-  // Fetch documents
+  // Fetch documents (safely omit storage_path from API response)
   const docsRes = await query(
-    `SELECT id, document_type, file_hash, original_filename, mime_type, file_size_bytes, storage_path, created_at
+    `SELECT id, document_type, file_hash, original_filename, mime_type, file_size_bytes, created_at
      FROM identity_documents
      WHERE registration_id = $1`,
     [result.registration_id]

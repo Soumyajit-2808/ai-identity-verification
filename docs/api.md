@@ -297,18 +297,36 @@ Returns system health, database connectivity status, and AI verification service
 ```
 
 ### GET /api/metrics
-Provides real-time verification processing counters and decision distributions.
+Provides real-time verification processing counters and decision distributions scoped to the authenticated operator's organization.
+
+**Headers**:
+`Authorization: Bearer <jwt_token>` (`role: reviewer` or `admin`)
 
 **Response (`200 OK`)**:
 ```json
 {
-  "totalVerifications": 142,
-  "decisions": {
-    "ELIGIBLE": 118,
-    "REVIEW": 19,
-    "INELIGIBLE": 5
-  },
-  "openReviews": 4,
-  "averageProcessingTimeMs": 380
+  "success": true,
+  "timestamp": "2026-09-19T14:30:00.000Z",
+  "organizationId": "11111111-1111-1111-1111-111111111111",
+  "metrics": {
+    "totalVerifications": 142,
+    "decisions": {
+      "ELIGIBLE": 118,
+      "REVIEW": 19,
+      "INELIGIBLE": 5
+    },
+    "openReviews": 4,
+    "uptimeSeconds": 14500,
+    "memoryUsageMb": 85
+  }
 }
 ```
+
+---
+
+## 7. Rate Limiting & Abuse Prevention
+
+The API Gateway enforces tiered rate limiting by IP:
+- **Global API**: 300 requests per 15-minute window (`RATE_LIMIT_EXCEEDED`).
+- **Authentication (`/api/auth/login`)**: 20 requests per 15-minute window (`AUTH_RATE_LIMIT_EXCEEDED`).
+- **ML Verification (`/api/verify`)**: 30 requests per 15-minute window (`VERIFY_RATE_LIMIT_EXCEEDED`) to prevent Denial of Service on computer vision and OCR inference.

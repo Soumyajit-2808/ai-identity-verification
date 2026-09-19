@@ -20,6 +20,7 @@ const eventRoutes = require('./src/routes/eventRoutes');
 const verificationRoutes = require('./src/routes/verificationRoutes');
 const reviewRoutes = require('./src/routes/reviewRoutes');
 const auditRoutes = require('./src/routes/auditRoutes');
+const { requireAuth, requireRole } = require('./src/middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -74,6 +75,18 @@ const authLimiter = rateLimit({
 });
 app.use('/api/auth/login', authLimiter);
 
+// Dedicated rate limiter for computationally heavy verification requests
+const verifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: {
+    success: false,
+    error: 'Too many verification attempts from this IP; please try again later.',
+    code: 'VERIFY_RATE_LIMIT_EXCEEDED',
+  },
+});
+app.use('/api/verify', verifyLimiter);
+
 // 5. Serve Frontend
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
@@ -115,14 +128,27 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-app.get('/api/metrics', async (req, res) => {
+app.get('/api/metrics', requireAuth, requireRole(['admin', 'reviewer']), async (req, res) => {
   try {
-    const totalResult = await query('SELECT COUNT(*) as cnt FROM verification_results');
-    const totalVerifications = parseInt(totalResult.rows[0].cnt || totalResult.rows[0].count || '0', 10);
+    const orgId = req.user.organization_id || null;
+    let totalQuery = 'SELECT COUNT(*) as cnt FROM verification_results vr JOIN verification_requests req ON vr.request_id = req.id JOIN events ev ON req.event_id = ev.id';
+    let decisionsQuery = 'SELECT vr.decision, COUNT(*) as cnt FROM verification_results vr JOIN verification_requests req ON vr.request_id = req.id JOIN events ev ON req.event_id = ev.id';
+    let reviewsQuery = "SELECT COUNT(*) as cnt FROM review_cases rc JOIN events ev ON rc.event_id = ev.id WHERE rc.status = 'OPEN'";
+    const params = [];
 
-    const decisionsResult = await query(
-      'SELECT decision, COUNT(*) as cnt FROM verification_results GROUP BY decision'
-    );
+    if (orgId) {
+      totalQuery += ' WHERE ev.organization_id = $1';
+      decisionsQuery += ' WHERE ev.organization_id = $1 GROUP BY vr.decision';
+      reviewsQuery += ' AND ev.organization_id = $1';
+      params.push(orgId);
+    } else {
+      decisionsQuery += ' GROUP BY vr.decision';
+    }
+
+    const totalResult = await query(totalQuery, params);
+    const totalVerifications = parseInt(totalResult.rows[0]?.cnt || totalResult.rows[0]?.count || '0', 10);
+
+    const decisionsResult = await query(decisionsQuery, params);
     const decisions = { ELIGIBLE: 0, INELIGIBLE: 0, REVIEW: 0 };
     for (const row of decisionsResult.rows) {
       if (row.decision) {
@@ -130,14 +156,13 @@ app.get('/api/metrics', async (req, res) => {
       }
     }
 
-    const reviewsResult = await query(
-      "SELECT COUNT(*) as cnt FROM review_cases WHERE status = 'OPEN'"
-    );
-    const openReviews = parseInt(reviewsResult.rows[0].cnt || reviewsResult.rows[0].count || '0', 10);
+    const reviewsResult = await query(reviewsQuery, params);
+    const openReviews = parseInt(reviewsResult.rows[0]?.cnt || reviewsResult.rows[0]?.count || '0', 10);
 
     res.json({
       success: true,
       timestamp: new Date().toISOString(),
+      organizationId: orgId,
       metrics: {
         totalVerifications,
         decisions,

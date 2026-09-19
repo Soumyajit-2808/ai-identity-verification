@@ -86,6 +86,14 @@ def verify_faces(
         doc_face_count = count_faces_opencv(doc_img)
         selfie_face_count = count_faces_opencv(selfie_img)
 
+        if doc_face_count > 1:
+            return FaceVerificationResult(
+                status="REVIEW",
+                match=False,
+                state="MULTIPLE_FACES_IN_DOCUMENT",
+                reason=f"Multiple faces ({doc_face_count}) were detected in the identity document image. A clear single photo is required."
+            )
+
         if selfie_face_count > 1:
             return FaceVerificationResult(
                 status="REVIEW",

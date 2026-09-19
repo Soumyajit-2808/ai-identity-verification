@@ -18,7 +18,7 @@ describe('Multi-Tenancy & Organization Isolation Tests', () => {
   let orgAId, orgBId;
   let eventAId, eventBId;
   let userAToken, userBToken;
-  let reviewCaseBId, documentBId;
+  let reviewCaseBId, documentBId, verifReqBId;
 
   beforeAll(async () => {
     await runMigrations();
@@ -101,6 +101,7 @@ describe('Multi-Tenancy & Organization Isolation Tests', () => {
     );
 
     const reqBId = crypto.randomUUID();
+    verifReqBId = reqBId;
     await query(
       `INSERT INTO verification_requests (id, registration_id, event_id, status)
        VALUES ($1, $2, $3, 'COMPLETED')`,
@@ -199,5 +200,53 @@ describe('Multi-Tenancy & Organization Isolation Tests', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/access denied: event belongs to another organization/i);
+  });
+
+  test('Unauthenticated requests to /api/verifications should be rejected with 401', async () => {
+    const res = await request(app).get('/api/verifications');
+    expect(res.status).toBe(401);
+  });
+
+  test('Reviewer in Org A should not see verification records from Org B in list', async () => {
+    const res = await request(app)
+      .get('/api/verifications')
+      .set('Authorization', `Bearer ${userAToken}`);
+
+    expect(res.status).toBe(200);
+    const reqIds = res.body.verifications.map(v => v.request_id);
+    expect(reqIds).not.toContain(verifReqBId);
+  });
+
+  test('Reviewer in Org B should see verification records from Org B in list', async () => {
+    const res = await request(app)
+      .get('/api/verifications')
+      .set('Authorization', `Bearer ${userBToken}`);
+
+    expect(res.status).toBe(200);
+    const reqIds = res.body.verifications.map(v => v.request_id);
+    expect(reqIds).toContain(verifReqBId);
+  });
+
+  test('Reviewer in Org A should receive 404 when directly fetching verification record of Org B', async () => {
+    const res = await request(app)
+      .get(`/api/verifications/${verifReqBId}`)
+      .set('Authorization', `Bearer ${userAToken}`);
+
+    expect(res.status).toBe(404);
+  });
+
+  test('Unauthenticated request to /api/metrics should return 401', async () => {
+    const res = await request(app).get('/api/metrics');
+    expect(res.status).toBe(401);
+  });
+
+  test('Reviewer in Org B should receive scoped metrics from /api/metrics', async () => {
+    const res = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${userBToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.organizationId).toBe(orgBId);
+    expect(res.body.metrics.totalVerifications).toBeGreaterThanOrEqual(1);
   });
 });

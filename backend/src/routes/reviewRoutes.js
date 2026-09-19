@@ -15,8 +15,9 @@ const { getDocumentBuffer } = require('../storage/documentStorage');
 const { query } = require('../db/connection');
 
 const router = express.Router();
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-router.get('/review-cases', requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
+router.get(['/review-cases', '/reviews'], requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
   try {
     const { eventId, status, limit } = req.query;
     const cases = await listReviewCases({
@@ -25,26 +26,32 @@ router.get('/review-cases', requireAuth, requireRole(['reviewer', 'admin']), asy
       organizationId: req.user.organization_id || null,
       limit: limit ? Number(limit) : 50,
     });
-    res.json({ success: true, count: cases.length, cases });
+    res.json({ success: true, count: cases.length, cases, data: cases });
   } catch (err) {
     next(err);
   }
 });
 
-router.get('/review-cases/:id', requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
+router.get(['/review-cases/:id', '/reviews/:id'], requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
   try {
+    if (!uuidRegex.test(req.params.id)) {
+      return res.status(400).json({ success: false, error: 'Invalid review case ID format.' });
+    }
     const reviewCase = await getReviewCaseById(req.params.id, req.user.organization_id || null);
     if (!reviewCase) {
       return res.status(404).json({ success: false, error: 'Review case not found or unauthorized.' });
     }
-    res.json({ success: true, case: reviewCase });
+    res.json({ success: true, case: reviewCase, data: reviewCase });
   } catch (err) {
     next(err);
   }
 });
 
-router.patch('/review-cases/:id', requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
+router.patch(['/review-cases/:id', '/reviews/:id'], requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
   try {
+    if (!uuidRegex.test(req.params.id)) {
+      return res.status(400).json({ success: false, error: 'Invalid review case ID format.' });
+    }
     const { status, reviewerNotes, resolutionReason } = req.body;
     const validStatuses = ['OPEN', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'ESCALATED'];
 
@@ -67,11 +74,13 @@ router.patch('/review-cases/:id', requireAuth, requireRole(['reviewer', 'admin']
       resolutionReason,
     });
 
-    // If operator approved or rejected the review case, synchronize registration status
+    // Synchronize registration status with review case disposition
     if (status === 'APPROVED') {
       await updateRegistrationStatus(currentCase.registration_id, 'VERIFIED');
     } else if (status === 'REJECTED') {
       await updateRegistrationStatus(currentCase.registration_id, 'REJECTED');
+    } else if (['OPEN', 'IN_REVIEW', 'ESCALATED'].includes(status)) {
+      await updateRegistrationStatus(currentCase.registration_id, 'REVIEW_REQUIRED');
     }
 
     await logEvent({
@@ -99,6 +108,9 @@ router.patch('/review-cases/:id', requireAuth, requireRole(['reviewer', 'admin']
 // Secure Document Retrieval for authorized operators
 router.get('/documents/:id/file', requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
   try {
+    if (!uuidRegex.test(req.params.id)) {
+      return res.status(400).json({ success: false, error: 'Invalid document ID format.' });
+    }
     const docRes = await query(
       `SELECT d.*, ev.organization_id
        FROM identity_documents d

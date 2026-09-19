@@ -12,31 +12,33 @@ This document outlines the security controls, threat models, input validation po
 | **Tampering** | Modification of document payload, EXIF metadata tampering, or SQL parameter injection | Cryptographic file hashing (SHA-256), magic-byte file inspection, parameter binding across dual-engine DB connection layer, strict Pydantic schemas. |
 | **Repudiation** | Operator denies reviewing or overriding a verification decision | Append-only `audit_logs` table recording operator ID, action name, target entity ID, IP address, timestamp, and previous vs new states. |
 | **Information Disclosure** | Leakage of identity documents, ID numbers, or applicant PII in system logs or client responses | Automatic regex PII masking in structured logs (`[REDACTED]`), content-addressed disk storage with random UUID/SHA-256 keys, stack trace sanitization in API error handlers. |
-| **Denial of Service** | Resource exhaustion via multi-gigabyte uploads, zip bombs, or high-frequency OCR requests | Express rate-limiting (100 req/15 min on public APIs), strict Multer 10MB payload thresholds, 30-second OCR timeout boundaries. |
-| **Elevation of Privilege** | Normal user accesses review queue or overrides verification status | Explicit RBAC middleware (`requireRole(['admin', 'reviewer'])`) blocking unauthorized mutation of `/api/reviews/:id`. |
+| **Denial of Service** | Resource exhaustion via multi-gigabyte uploads, zip bombs, or high-frequency OCR requests | Tiered Express rate-limiting (300 req/15 min global, 20 req/15 min auth, 30 req/15 min ML verification), strict 12MB payload thresholds, and request cancellation boundaries. |
+| **Elevation of Privilege** | Normal user accesses review queue or overrides verification status | Explicit RBAC middleware (`requireRole(['admin', 'reviewer'])`) and strict multi-tenant boundary checks blocking unauthorized access or mutation across organizations. |
 
 ---
 
 ## 2. Authentication & Role-Based Access Control (RBAC)
 
-The platform enforces zero-trust role separation:
+The platform enforces zero-trust role separation and strict multi-tenant organization isolation:
 
 ```mermaid
 flowchart TD
     Req[Incoming HTTP Request] --> AuthMw[JWT Auth Middleware]
     AuthMw -->|Invalid or Missing Token| Deny401[401 Unauthorized]
-    AuthMw -->|Valid Token| RoleMw[RBAC Policy Check]
-    RoleMw -->|Insufficient Permissions| Deny403[403 Forbidden]
+    AuthMw -->|Valid Token| TenantMw[Organization Boundary Check]
+    TenantMw -->|Cross-Tenant Resource Access| Deny403[403 Forbidden / 404 Not Found]
+    TenantMw -->|Tenant Matched| RoleMw[RBAC Policy Check]
+    RoleMw -->|Insufficient Permissions| Deny403Role[403 Forbidden]
     RoleMw -->|Authorized| Controller[Route Handler]
 ```
 
 ### Role Matrix
 
-| Role | Verification Submission | View Public Result | View Review Queue | Resolve Review Cases | Edit Event Policies | Access Raw Audit Logs |
+| Role | Verification Submission | View Public Result | View Review Queue | Resolve Review Cases | Edit Event Policies | Access Organization Audit Logs |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Anonymous / Public** | Yes | Yes (Session only) | No | No | No | No |
-| **Reviewer** | Yes | Yes | Yes | Yes | No | No |
-| **Administrator** | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Reviewer** | Yes | Yes | Yes (Scoped) | Yes (Scoped) | No | No |
+| **Administrator** | Yes | Yes | Yes (Scoped) | Yes (Scoped) | Yes (Scoped) | Yes (Scoped) |
 
 ---
 
@@ -54,9 +56,10 @@ To prevent arbitrary code execution, malicious polyglot files, and directory tra
 2. **Content Addressing & Path Traversal Prevention**:
    - Files are stored on disk using their computed `SHA-256` checksum: `<sha256>.<clean_ext>`.
    - Client-provided filenames (`req.file.originalname`) are sanitized via regex (`[^a-zA-Z0-9._-]`) and never used directly as disk paths.
-3. **Storage Isolation**:
+3. **Storage Isolation & Automatic Cleanup**:
    - Upload directory permissions are restricted.
-   - Files cannot be directly browsed or executed via HTTP GET; they are retrieved strictly through authenticated API streams.
+   - Files cannot be directly browsed or executed via HTTP GET; they are retrieved strictly through authenticated, tenant-verified API streams.
+   - If AI processing fails or the database transaction aborts, temporary files are immediately deleted from disk to prevent orphaned files.
 
 ---
 

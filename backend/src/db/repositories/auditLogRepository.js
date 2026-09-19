@@ -39,26 +39,34 @@ async function logEvent({
   return { id, action, entityType, entityId };
 }
 
-async function listAuditLogs({ entityType = null, entityId = null, limit = 100 } = {}) {
+async function listAuditLogs({ entityType = null, entityId = null, organizationId = null, limit = 100 } = {}) {
   let queryText = `
-    SELECT id, actor_id, actor_role, action, entity_type, entity_id, event_id,
-           details_json, ip_address, created_at
-    FROM audit_logs
+    SELECT al.id, al.actor_id, al.actor_role, al.action, al.entity_type, al.entity_id, al.event_id,
+           al.details_json, al.ip_address, al.created_at
+    FROM audit_logs al
+    LEFT JOIN events ev ON al.event_id = ev.id
+    LEFT JOIN users u ON al.actor_id = u.id
     WHERE 1=1
   `;
   const params = [];
   let pIdx = 1;
 
+  if (organizationId) {
+    queryText += ` AND (ev.organization_id = $${pIdx} OR u.organization_id = $${pIdx})`;
+    params.push(organizationId);
+    pIdx++;
+  }
+
   if (entityType) {
-    queryText += ` AND entity_type = $${pIdx++}`;
+    queryText += ` AND al.entity_type = $${pIdx++}`;
     params.push(entityType);
   }
   if (entityId) {
-    queryText += ` AND entity_id = $${pIdx++}`;
+    queryText += ` AND al.entity_id = $${pIdx++}`;
     params.push(entityId);
   }
 
-  queryText += ` ORDER BY created_at DESC LIMIT $${pIdx}`;
+  queryText += ` ORDER BY al.created_at DESC LIMIT $${pIdx}`;
   params.push(limit);
 
   const res = await query(queryText, params);

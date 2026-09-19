@@ -114,6 +114,7 @@ async def verify_identity(
     max_age: int = Form(100),
     require_selfie: bool = Form(False),
     strict_name_matching: bool = Form(False),
+    allowed_id_types: Optional[str] = Form(None),
 ):
     """
     Complete identity and eligibility verification pipeline.
@@ -128,6 +129,11 @@ async def verify_identity(
             validate_image_bytes(selfie_contents, "selfie")
         else:
             selfie_contents = None
+
+    # Parse allowed ID types
+    allowed_types_list = None
+    if allowed_id_types:
+        allowed_types_list = [t.strip().upper() for t in allowed_id_types.split(',') if t.strip()]
 
     # 1. OCR Extraction
     ocr_result = run_ocr(doc_contents)
@@ -146,6 +152,7 @@ async def verify_identity(
         selfie_bytes=selfie_contents,
         require_selfie=require_selfie,
         strict_name_matching=strict_name_matching,
+        allowed_id_types=allowed_types_list,
     )
 
     return VerificationResponse(

@@ -112,8 +112,9 @@ async function getReviewCaseById(id, organizationId = null) {
   );
 
   // Fetch document metadata
+  // Fetch document metadata (safely omit storage_path from API response)
   const docsRes = await query(
-    `SELECT id, document_type, file_hash, original_filename, mime_type, file_size_bytes, storage_path, created_at
+    `SELECT id, document_type, file_hash, original_filename, mime_type, file_size_bytes, created_at
      FROM identity_documents
      WHERE registration_id = $1`,
     [row.registration_id]
@@ -144,6 +145,8 @@ async function updateReviewCase(id, { status, assignedTo, reviewerNotes, resolut
     params.push(status);
     if (['APPROVED', 'REJECTED'].includes(status)) {
       updates.push(`resolved_at = CURRENT_TIMESTAMP`);
+    } else {
+      updates.push(`resolved_at = NULL`);
     }
   }
   if (assignedTo !== undefined) {

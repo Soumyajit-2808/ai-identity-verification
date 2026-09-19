@@ -25,7 +25,8 @@ const {
 } = require('../db/repositories/verificationRepository');
 const { createReviewCase } = require('../db/repositories/reviewCaseRepository');
 const { logEvent } = require('../db/repositories/auditLogRepository');
-const { validateMagicBytes, saveDocument } = require('../storage/documentStorage');
+const { validateMagicBytes, saveDocument, deleteDocument } = require('../storage/documentStorage');
+const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001';
@@ -45,6 +46,10 @@ router.post(
     { name: 'selfie', maxCount: 1 },
   ]),
   async (req, res, next) => {
+    let storedDoc = null;
+    let storedSelfie = null;
+    let transactionCommitted = false;
+
     try {
       const docFile = req.files?.file?.[0] || req.files?.document?.[0];
       const selfieFile = req.files?.selfie?.[0];
@@ -109,13 +114,12 @@ router.post(
       }
 
       // 3. Secure Document Storage
-      const storedDoc = await saveDocument({
+      storedDoc = await saveDocument({
         buffer: docFile.buffer,
         originalFilename: docFile.originalname,
         mimeType: docByteValidation.detectedMime,
       });
 
-      let storedSelfie = null;
       if (selfieFile) {
         storedSelfie = await saveDocument({
           buffer: selfieFile.buffer,
@@ -136,6 +140,7 @@ router.post(
       formData.append('max_age', String(event.max_age));
       formData.append('require_selfie', String(event.require_selfie));
       formData.append('strict_name_matching', String(event.strict_name_matching));
+      formData.append('allowed_id_types', (event.allowed_id_types || []).join(','));
 
       if (selfieFile) {
         const selfieBlob = new Blob([selfieFile.buffer], { type: selfieByteValidation.detectedMime });
@@ -156,6 +161,9 @@ router.post(
         aiResponse = await response.json();
       } catch (aiErr) {
         console.error('[AI Service Error]', aiErr.message);
+        // Clean up temporary documents to prevent orphans
+        if (storedDoc) await deleteDocument(storedDoc.storagePath).catch(() => {});
+        if (storedSelfie) await deleteDocument(storedSelfie.storagePath).catch(() => {});
         return res.status(502).json({
           success: false,
           error: 'The AI verification engine is currently unreachable or failed processing.',
@@ -424,30 +432,47 @@ router.post(
           },
           signals,
         };
+        transactionCommitted = true;
       });
 
       res.json(responsePayload);
     } catch (err) {
+      if (!transactionCommitted) {
+        if (storedDoc) await deleteDocument(storedDoc.storagePath).catch(() => {});
+        if (storedSelfie) await deleteDocument(storedSelfie.storagePath).catch(() => {});
+      }
       next(err);
     }
   }
 );
 
-router.get('/verifications', async (req, res, next) => {
+const handleVerificationHistory = async (req, res, next) => {
   try {
     const { eventId, limit } = req.query;
-    const history = await getVerificationHistory(eventId || null, limit ? Number(limit) : 50);
-    res.json({ success: true, count: history.length, verifications: history });
+    const history = await getVerificationHistory({
+      eventId: eventId || null,
+      organizationId: req.user.organization_id || null,
+      limit: limit ? Number(limit) : 50,
+    });
+    res.json({ success: true, count: history.length, verifications: history, data: history });
   } catch (err) {
     next(err);
   }
-});
+};
 
-router.get('/verifications/:id', async (req, res, next) => {
+router.get('/verifications', requireAuth, requireRole(['reviewer', 'admin']), handleVerificationHistory);
+router.get('/history', requireAuth, requireRole(['reviewer', 'admin']), handleVerificationHistory);
+
+router.get('/verifications/:id', requireAuth, requireRole(['reviewer', 'admin']), async (req, res, next) => {
   try {
-    const details = await getVerificationDetails(req.params.id);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(req.params.id)) {
+      return res.status(400).json({ success: false, error: 'Invalid verification request ID format.' });
+    }
+
+    const details = await getVerificationDetails(req.params.id, req.user.organization_id || null);
     if (!details) {
-      return res.status(404).json({ success: false, error: 'Verification record not found.' });
+      return res.status(404).json({ success: false, error: 'Verification record not found or unauthorized.' });
     }
     res.json({ success: true, verification: details });
   } catch (err) {

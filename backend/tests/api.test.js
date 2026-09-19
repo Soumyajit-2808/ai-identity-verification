@@ -97,4 +97,40 @@ describe('Backend API Endpoints', () => {
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('MISSING_NAME');
   });
+
+  test('7. PATCH /api/events/:id rejects invalid policy (minAge > maxAge)', async () => {
+    const eventsRes = await request(app).get('/api/events');
+    const eventId = eventsRes.body.events[0].id;
+
+    const res = await request(app)
+      .patch(`/api/events/${eventId}`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({ minAge: 50, maxAge: 20 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/minAge cannot exceed maxAge/i);
+  });
+
+  test('8. GET /api/metrics requires authentication and returns metrics with token', async () => {
+    const unauthRes = await request(app).get('/api/metrics');
+    expect(unauthRes.status).toBe(401);
+
+    const authRes = await request(app)
+      .get('/api/metrics')
+      .set('Authorization', `Bearer ${authToken}`);
+    expect(authRes.status).toBe(200);
+    expect(authRes.body.success).toBe(true);
+    expect(authRes.body.metrics.decisions).toBeDefined();
+  });
+
+  test('9. GET /api/verifications requires authentication and returns history with token', async () => {
+    const unauthRes = await request(app).get('/api/verifications');
+    expect(unauthRes.status).toBe(401);
+
+    const authRes = await request(app)
+      .get('/api/verifications')
+      .set('Authorization', `Bearer ${authToken}`);
+    expect(authRes.status).toBe(200);
+    expect(Array.isArray(authRes.body.verifications)).toBe(true);
+  });
 });

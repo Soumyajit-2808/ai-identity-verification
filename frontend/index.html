@@ -1593,8 +1593,14 @@
     // History Loader
     async function loadHistory() {
       const tbody = document.getElementById('historyTableBody');
+      if (!state.authToken) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--slate-400); padding:2rem;">Sign in required to view verification history.</td></tr>`;
+        return;
+      }
       try {
-        const res = await fetch('/api/verifications?limit=50');
+        const res = await fetch('/api/verifications?limit=50', {
+          headers: { 'Authorization': `Bearer ${state.authToken}` }
+        });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 

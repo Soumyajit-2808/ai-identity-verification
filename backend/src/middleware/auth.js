@@ -12,6 +12,9 @@ if (process.env.NODE_ENV === 'production') {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET === DEFAULT_DEV_SECRET || process.env.JWT_SECRET === 'VERIFY_ID_SECURE_JWT_SECRET_2026_KEY_PROD') {
     throw new Error('[Security Exception] In production mode, JWT_SECRET must be configured with a unique, secure secret key.');
   }
+  if (!process.env.PII_SALT || process.env.PII_SALT === 'VERIFY_ID_SALT_2026_DEFAULT') {
+    throw new Error('[Security Exception] In production mode, PII_SALT must be configured with a unique, cryptographically random salt.');
+  }
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_DEV_SECRET;
