@@ -1,6 +1,6 @@
 # Privacy & Data Governance Architecture
 
-This document details the data privacy mechanisms, retention policies, cryptographic protections, and compliance standards designed into the platform for processing Personally Identifiable Information (PII) and biometric data.
+This document details the data privacy mechanisms, cryptographic protections, and compliance standards designed into the platform for processing Personally Identifiable Information (PII) and biometric data.
 
 ---
 
@@ -9,30 +9,30 @@ This document details the data privacy mechanisms, retention policies, cryptogra
 The platform adheres to four foundational data protection principles:
 
 1. **Data Minimization**:
-   - Only fields directly relevant to eligibility verification (e.g., Full Name, Date of Birth, ID Number, ID Type, Institution, Expiry Date) are extracted and persisted.
-   - Irrelevant personal data present on government IDs (e.g., father's name, blood group, religious markers, residential address) are omitted from extraction schemas unless explicitly required by event policy.
+   - Only fields directly relevant to eligibility verification (Full Name, Date of Birth, ID Number, ID Type, Institution) are extracted and persisted.
+   - Address fields, parentage, and unrelated markers are omitted from extraction schemas.
 2. **Purpose Limitation**:
    - Applicant verification records are scoped strictly to the specific `event_id` and `organization_id` under which registration was submitted.
-3. **Storage Limitation (Configurable Retention)**:
-   - Verification documents and selfies are not stored permanently by default.
-   - The platform supports configurable document retention windows (e.g., 30 days post-event completion), after which raw media blobs are scheduled for cryptographic purge.
+3. **Storage Limitation & Automatic Failure Cleanup**:
+   - If AI processing fails or the database transaction aborts, temporary files are immediately deleted from disk to prevent orphaned documents.
+   - *Planned Future Capability*: Configurable retention schedules (e.g. 30 days post-event) and automated cryptographic purging of media files are planned for production enterprise deployment.
 4. **Integrity & Confidentiality**:
-   - Sensitive ID numbers are indexed using cryptographic hashes.
-   - Raw media files reside on encrypted volumes or private object storage buckets inaccessible to the public internet.
+   - Sensitive ID numbers are indexed using salted cryptographic hashes (`PII_SALT`).
+   - Raw media files reside in private storage directories inaccessible to direct HTTP requests.
 
 ---
 
 ## 2. PII Classification & Data Handling Matrix
 
-| Data Element | Storage Location | Encryption at Rest | Masked in Logs | Retention Default |
+| Data Element | Storage Location | Encryption / Protection | Masked in Logs | Current Retention |
 | :--- | :--- | :---: | :---: | :--- |
-| **Government ID Image** | Local Secure Storage / S3 | AES-256 | Excluded | 30 Days (Configurable) |
-| **Selfie Image** | Local Secure Storage / S3 | AES-256 | Excluded | 30 Days (Configurable) |
-| **ID Number** | `extracted_identities.id_number` | Column / DB Encryption | Masked (`****1234`) | Scoped to Event Lifecycle |
-| **ID Number Hash** | `identity_registry.id_number_hash` | SHA-256 with Salt | Full Hash | Permanent (Fraud Prevention) |
-| **Date of Birth** | `extracted_identities.dob` | Standard DB Field | Masked | Scoped to Event Lifecycle |
+| **Government ID Image** | Local Secure Storage | Storage Isolation | Excluded | Scoped to Event Lifecycle |
+| **Selfie Image** | Local Secure Storage | Storage Isolation | Excluded | Scoped to Event Lifecycle |
+| **ID Number** | `identity_results` | Masked (`****1234`) | Masked | Scoped to Event Lifecycle |
+| **ID Number Hash** | `identity_registry.id_number_hash` | Salted HMAC-SHA256 | Full Hash | Permanent (Deduplication) |
+| **Date of Birth** | `verification_results` | Standard DB Field | Masked | Scoped to Event Lifecycle |
 | **Face Biometric Vectors** | Ephemeral RAM (DeepFace) | Not stored permanently | Excluded | Discarded after inference |
-| **Audit Logs** | `audit_logs` | Immutable DB Table | Redacted PII | 1 Year (Legal Audit Trail) |
+| **Audit Logs** | `audit_logs` | Append-only DB Table | Sanitized PII | Preserved for Audit Trail |
 
 ---
 
@@ -41,35 +41,15 @@ The platform adheres to four foundational data protection principles:
 Biometric verification (selfie-to-document face comparison) introduces stringent privacy obligations:
 
 - **No Permanent Biometric Vector Databases**:
-  - DeepFace / FaceNet512 embeddings are computed in-memory during request processing and are **never** serialized into long-term relational tables.
-  - Only the resulting scalar metrics (`verified: bool`, `distance: float`, `similarity: float`, `threshold: float`, `detector_backend: string`) are saved in `face_verifications`.
+  - DeepFace embeddings are computed in-memory during request processing and are **never** stored in relational tables or vector databases.
+  - Only scalar similarity results (`distance`, `threshold`, `match: bool`) and the `FACE_MATCH` signal are recorded.
 - **Presentation Attack Disclaimer**:
-  - The platform explicitly discloses that standard 2D selfie matching does not guarantee liveness or presentation attack prevention.
-- **Biometric Consent Marker**:
-  - Verification requests can record an explicit `biometricConsent: true` flag in the submission metadata to document applicant authorization.
+  - The platform explicitly discloses that standard 2D selfie matching evaluates geometric facial feature proximity and does not perform active 3D liveness or presentation attack detection.
 
 ---
 
-## 4. Deletion & Right to Be Forgotten (GDPR / DPDP Compliance)
+## 4. Deletion & Data Purge Capabilities
 
-When an applicant exercises their right to data deletion:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Admin as Authorized Operator
-    participant API as Backend Gateway
-    participant DB as PostgreSQL / SQLite
-    participant Storage as Document Storage
-
-    Admin->>API: DELETE /api/registrations/:id
-    API->>Storage: Delete ID Document Blob (<sha256>.jpg)
-    API->>Storage: Delete Selfie Blob (<sha256>.jpg)
-    API->>DB: Cascading Delete (documents, extractions, verifications)
-    API->>DB: INSERT into audit_logs (ACTION="PURGE_PII", entity_id=:id)
-    API-->>Admin: 200 OK (PII Purged, Audit Marker Retained)
-```
-
-1. **Blob Deletion**: The underlying media files are unlinked from the filesystem or deleted from S3.
-2. **Relational Cascade**: Foreign keys with `ON DELETE CASCADE` remove `documents`, `extracted_identities`, `verification_signals`, and `face_verifications`.
-3. **Audit Trail Anonymization**: The `audit_logs` entry retains the action type (`PII_PURGED`) and timestamp, but anonymizes all associated applicant personal data.
+- **Automated Failure Cleanup**: Unlinked immediately upon processing abort or transaction rollback.
+- **Database Cascade**: Relational foreign keys with `ON DELETE CASCADE` ensure that removing an event or registration cascades to verification requests, results, signals, documents, and review cases.
+- **Planned Enterprise Feature**: An automated retention manager scheduled to purge media files older than a configurable retention window (e.g., 30 days) is planned for future enterprise compliance releases.

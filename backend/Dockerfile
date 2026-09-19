@@ -28,6 +28,7 @@ COPY --chown=node:node --from=builder /app/node_modules ./node_modules
 COPY --chown=node:node --from=builder /app/src ./src
 COPY --chown=node:node --from=builder /app/database ./database
 COPY --chown=node:node --from=builder /app/package*.json ./
+COPY --chown=node:node --from=builder /app/frontend ./frontend
 COPY --chown=node:node --from=builder /app/server.js ./
 
 EXPOSE 3000

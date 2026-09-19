@@ -18,7 +18,7 @@ class NameMatchResult(BaseModel):
     details: Dict[str, Any] = {}
 
 
-HONORIFICS = {"MR", "MS", "MRS", "DR", "PROF", "SHRI", "SMT", "KUMAR", "KUMARI"}
+HONORIFICS = {"MR", "MS", "MRS", "DR", "PROF", "SHRI", "SMT", "MD"}
 
 
 def clean_name_tokens(name: str) -> List[str]:
@@ -27,8 +27,8 @@ def clean_name_tokens(name: str) -> List[str]:
     # Uppercase and remove special characters except spaces
     cleaned = re.sub(r"[^A-Za-z\s]", " ", name.upper())
     tokens = [t for t in cleaned.split() if t]
-    # Filter out pure honorific prefixes
-    if tokens and tokens[0] in HONORIFICS:
+    # Filter out pure honorific prefix only if multiple tokens remain
+    if len(tokens) > 1 and tokens[0] in HONORIFICS:
         tokens = tokens[1:]
     return tokens
 
@@ -144,11 +144,12 @@ def check_initials_match(tokens1: List[str], tokens2: List[str]) -> Tuple[bool, 
 def match_names(
     extracted_name: str,
     registration_name: str,
-    threshold: float = 0.75,
+    threshold: float = 0.80,
     strict: bool = False
 ) -> NameMatchResult:
     """
     Evaluate similarity between document-extracted name and participant registration name.
+    Conservative by design: avoids false positives on identical first names or identical surnames.
     """
     if not extracted_name or not registration_name:
         return NameMatchResult(
@@ -167,6 +168,8 @@ def match_names(
     norm1 = " ".join(t1)
     norm2 = " ".join(t2)
 
+    effective_threshold = 0.90 if strict else threshold
+
     # 1. Exact string match after normalization
     if norm1 == norm2:
         return NameMatchResult(
@@ -175,7 +178,7 @@ def match_names(
             method="EXACT_MATCH",
             normalized_extracted=norm1,
             normalized_registration=norm2,
-            threshold=threshold,
+            threshold=effective_threshold,
             details={"match_type": "exact"}
         )
 
@@ -187,60 +190,123 @@ def match_names(
             method="TOKEN_REORDER",
             normalized_extracted=norm1,
             normalized_registration=norm2,
-            threshold=threshold,
+            threshold=effective_threshold,
             details={"match_type": "order_permutation"}
         )
 
     # 3. Initials matching (e.g. "R. Sharma" vs "Rahul Sharma")
     is_initials, initials_score = check_initials_match(t1, t2)
     if is_initials:
+        matched = (initials_score >= effective_threshold) if strict else True
         return NameMatchResult(
-            matched=True,
+            matched=matched,
             score=round(initials_score, 2),
             method="INITIALS_MATCH",
             normalized_extracted=norm1,
             normalized_registration=norm2,
-            threshold=threshold,
-            details={"match_type": "initial_expansion"}
+            threshold=effective_threshold,
+            details={"match_type": "initial_expansion", "strict_mode": strict}
         )
 
-    # 4. Token Overlap / Jaccard similarity (handles missing middle names)
-    set1, set2 = set(t1), set(t2)
-    intersection = set1.intersection(set2)
-    union = set1.union(set2)
-    jaccard = len(intersection) / max(len(union), 1)
+    # 4. Middle Name Expansion / Containment check
+    # e.g., "Rahul Kumar Sharma" vs "Rahul Sharma"
+    # To be a valid middle-name expansion:
+    # First token (first name) MUST match and Last token (surname) MUST match!
+    # If the surname differs (e.g. "Rahul Sharma" vs "Rahul Sharma Kumar"), this is NOT a middle-name match.
+    if len(t1) != len(t2):
+        longer, shorter = (t1, t2) if len(t1) > len(t2) else (t2, t1)
+        shorter_set = set(shorter)
+        longer_set = set(longer)
+        if shorter_set.issubset(longer_set) and len(shorter) >= 2:
+            first_matches = longer[0] == shorter[0]
+            last_matches = longer[-1] == shorter[-1]
+            if first_matches and last_matches:
+                # Genuine middle name inclusion
+                containment_score = 0.88
+                matched = containment_score >= effective_threshold
+                return NameMatchResult(
+                    matched=matched,
+                    score=containment_score,
+                    method="SUBSET_MATCH",
+                    normalized_extracted=norm1,
+                    normalized_registration=norm2,
+                    threshold=effective_threshold,
+                    details={
+                        "shared_tokens": list(shorter_set),
+                        "middle_name_expansion": True,
+                        "strict_rejected": strict and not matched
+                    }
+                )
+            else:
+                # Suffix/surname mismatch: e.g. "Rahul Sharma" vs "Rahul Sharma Kumar"
+                return NameMatchResult(
+                    matched=False,
+                    score=0.40,
+                    method="SURNAME_MISMATCH",
+                    normalized_extracted=norm1,
+                    normalized_registration=norm2,
+                    threshold=effective_threshold,
+                    details={"reason": "Last token (surname) does not match despite token overlap."}
+                )
 
-    # Containment (one is a strict subset of the other, e.g. "Rahul Kumar Sharma" vs "Rahul Sharma")
-    is_subset = set1.issubset(set2) or set2.issubset(set1)
-    if is_subset and len(intersection) >= 2:
-        containment_score = 0.90
+    # 5. Token-by-token comparison for same-length names (e.g., 2 tokens vs 2 tokens)
+    if len(t1) == len(t2) and len(t1) >= 2:
+        token_scores = []
+        has_severe_mismatch = False
+
+        for tok1, tok2 in zip(t1, t2):
+            if tok1 == tok2:
+                token_scores.append(1.0)
+            else:
+                lev = levenshtein_distance(tok1, tok2)
+                jw = jaro_winkler_similarity(tok1, tok2)
+                # If a token differs significantly (> 1 edit for short names or jw < 0.80),
+                # it represents a completely different name (e.g. Kumar vs Sharma, Amit vs Rahul)
+                if lev > 1 and jw < 0.82:
+                    has_severe_mismatch = True
+                token_scores.append(round(jw, 2))
+
+        if has_severe_mismatch:
+            # Different first names or different surnames must NEVER match!
+            min_score = min(token_scores)
+            return NameMatchResult(
+                matched=False,
+                score=round(sum(token_scores) / len(token_scores) * 0.5, 2),
+                method="TOKEN_MISMATCH",
+                normalized_extracted=norm1,
+                normalized_registration=norm2,
+                threshold=effective_threshold,
+                details={
+                    "token_scores": token_scores,
+                    "reason": "At least one primary name token (first name or surname) differs completely."
+                }
+            )
+
+        # If all tokens are close typos (e.g. "Rahui Sharma" vs "Rahul Sharma")
+        avg_score = round(sum(token_scores) / len(token_scores), 2)
+        matched = avg_score >= effective_threshold
         return NameMatchResult(
-            matched=True,
-            score=containment_score,
-            method="SUBSET_MATCH",
+            matched=matched,
+            score=avg_score,
+            method="TOKEN_TYPO_TOLERANCE",
             normalized_extracted=norm1,
             normalized_registration=norm2,
-            threshold=threshold,
-            details={"shared_tokens": list(intersection)}
+            threshold=effective_threshold,
+            details={"token_scores": token_scores}
         )
 
-    # 5. Jaro-Winkler string similarity (robust to character typos & OCR confusion)
+    # 6. General Jaro-Winkler string similarity fallback
     jw_score = jaro_winkler_similarity(norm1, norm2)
-
-    # In strict mode, only allow high threshold (>= 0.90)
-    effective_threshold = 0.90 if strict else threshold
-    final_score = max(jaccard, jw_score)
-    matched = final_score >= effective_threshold
+    matched = jw_score >= effective_threshold
 
     return NameMatchResult(
         matched=matched,
-        score=round(final_score, 2),
+        score=round(jw_score, 2),
         method="FUZZY_COMPOSITE",
         normalized_extracted=norm1,
         normalized_registration=norm2,
         threshold=effective_threshold,
         details={
-            "jaccard_score": round(jaccard, 2),
             "jaro_winkler_score": round(jw_score, 2),
             "levenshtein_distance": levenshtein_distance(norm1, norm2),
         }

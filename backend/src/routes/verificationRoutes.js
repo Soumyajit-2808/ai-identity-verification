@@ -15,6 +15,7 @@ const {
   checkIdentityReuse,
   registerIdentity,
   maskIdNumber,
+  isUniqueConstraintViolation,
 } = require('../db/repositories/identityRegistryRepository');
 const {
   createVerificationRequest,
@@ -85,10 +86,11 @@ router.post(
       // 2. Validate Magic Bytes (Actual binary signature check)
       const docByteValidation = validateMagicBytes(docFile.buffer);
       if (!docByteValidation.isValid) {
+        const isPdf = docByteValidation.detectedMime === 'application/pdf';
         return res.status(400).json({
           success: false,
           error: `Invalid identity document file format: ${docByteValidation.error}`,
-          code: 'INVALID_FILE_SIGNATURE',
+          code: isPdf ? 'PDF_NOT_SUPPORTED' : 'INVALID_FILE_SIGNATURE',
         });
       }
 
@@ -199,7 +201,9 @@ router.post(
           reason: `Exact document file hash matches an existing submission registered on ${duplicateFileCheck.createdAt}.`,
           details: { existingRegistrationId: duplicateFileCheck.existingRegistrationId },
         });
-        finalDecision = 'REVIEW';
+        if (finalDecision !== 'INELIGIBLE') {
+          finalDecision = 'REVIEW';
+        }
         finalRisk = Math.min(1.0, finalRisk + 0.35);
         summaryReasons.push('document file was previously submitted');
       } else {
@@ -233,7 +237,9 @@ router.post(
             reason: `Extracted ID number was previously registered under a different name ('${identityReuseCheck.previousName}').`,
             details: { previousName: identityReuseCheck.previousName },
           });
-          finalDecision = 'REVIEW';
+          if (finalDecision !== 'INELIGIBLE') {
+            finalDecision = 'REVIEW';
+          }
           finalRisk = Math.min(1.0, finalRisk + 0.40);
           summaryReasons.push('ID number reuse detected with conflicting participant name');
         }
@@ -320,6 +326,30 @@ router.post(
           txClient
         );
 
+        // Re-check exact duplicate file inside transaction to eliminate race conditions
+        if (!duplicateFileCheck.isDuplicate) {
+          const inTxDupCheck = await checkDuplicateFile(event.id, storedDoc.fileHash, txClient);
+          if (inTxDupCheck.isDuplicate) {
+            duplicateFileCheck = inTxDupCheck;
+            if (finalDecision !== 'INELIGIBLE') {
+              finalDecision = 'REVIEW';
+            }
+            finalRisk = Math.min(1.0, finalRisk + 0.35);
+            finalSummaryReason = (finalSummaryReason + '; document file was previously submitted (concurrency detected)').trim();
+            const dupIdx = signals.findIndex(s => s.signal_type === 'DUPLICATE_FILE' || s.signalType === 'DUPLICATE_FILE');
+            const dupSignal = {
+              signal_type: 'DUPLICATE_FILE',
+              signalType: 'DUPLICATE_FILE',
+              status: 'REVIEW',
+              score: 0.0,
+              reason: `Exact document file hash matches an existing submission registered on ${inTxDupCheck.createdAt}.`,
+              details: { existingRegistrationId: inTxDupCheck.existingRegistrationId },
+            };
+            if (dupIdx >= 0) signals[dupIdx] = dupSignal;
+            else signals.push(dupSignal);
+          }
+        }
+
         // Save verification result
         const verifResult = await saveVerificationResult(
           {
@@ -339,7 +369,7 @@ router.post(
         await saveVerificationSignals(verifResult.id, signals, txClient);
 
         // Register in deduplication registry
-        if (!duplicateFileCheck.isDuplicate || !identityReuseCheck.isReused) {
+        if (!duplicateFileCheck.isDuplicate && (!identityReuseCheck.isReused || identityReuseCheck.isSamePersonResubmission)) {
           try {
             await registerIdentity(
               {
@@ -353,8 +383,16 @@ router.post(
               txClient
             );
           } catch (regErr) {
-            // Concurrent race condition prevented by unique constraint
-            console.warn('[Identity Registry Concurrency Lock]', regErr.message);
+            if (isUniqueConstraintViolation(regErr)) {
+              // Concurrent race condition prevented by unique constraint
+              console.warn('[Identity Registry Concurrency Lock]', {
+                eventId: event.id,
+                message: regErr.message,
+              });
+            } else {
+              // Unexpected database error MUST propagate to abort transaction and return 500
+              throw regErr;
+            }
           }
         }
 

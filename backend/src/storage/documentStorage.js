@@ -47,12 +47,16 @@ function validateMagicBytes(buffer) {
     return { isValid: true, detectedMime: 'image/webp' };
   }
 
-  // PDF: %PDF (25 50 44 46)
+  // PDF: %PDF (25 50 44 46) - Explicitly unsupported in image OCR/vision pipeline
   if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
-    return { isValid: true, detectedMime: 'application/pdf' };
+    return {
+      isValid: false,
+      detectedMime: 'application/pdf',
+      error: 'PDF documents are not supported. Only JPEG, PNG, and WebP images are permitted.',
+    };
   }
 
-  return { isValid: false, detectedMime: null, error: 'Unsupported file signature; only JPEG, PNG, WebP, and PDF are permitted.' };
+  return { isValid: false, detectedMime: null, error: 'Unsupported file format. Only JPEG, PNG, and WebP images are permitted.' };
 }
 
 /**

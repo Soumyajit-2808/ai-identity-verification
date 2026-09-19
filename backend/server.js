@@ -34,9 +34,19 @@ app.use(
   })
 );
 
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*',
+    origin: (origin, callback) => {
+      // Allow non-browser requests (e.g. server-to-server, curl, tests) or matching origins
+      if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('CORS request blocked: origin unauthorized.'));
+    },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
   })
@@ -88,7 +98,22 @@ const verifyLimiter = rateLimit({
 app.use('/api/verify', verifyLimiter);
 
 // 5. Serve Frontend
-app.use(express.static(path.join(__dirname, '..', 'frontend')));
+const candidateFrontendPaths = [
+  path.join(__dirname, '..', 'frontend'),
+  path.join(__dirname, 'frontend'),
+  '/app/frontend',
+];
+const fs = require('fs');
+const frontendDir = candidateFrontendPaths.find(p => fs.existsSync(p)) || path.join(__dirname, '..', 'frontend');
+app.use(express.static(frontendDir));
+
+app.get('/', (req, res, next) => {
+  const indexHtml = path.join(frontendDir, 'index.html');
+  if (fs.existsSync(indexHtml)) {
+    return res.sendFile(indexHtml);
+  }
+  next();
+});
 
 // 6. Health & Diagnostics
 app.get('/api/health', async (req, res) => {

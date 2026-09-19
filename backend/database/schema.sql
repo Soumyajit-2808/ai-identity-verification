@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS identity_registry (
     registered_name TEXT NOT NULL,
     document_file_hash TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_event_id_number UNIQUE (event_id, id_number_hash)
+    CONSTRAINT uq_event_id_number UNIQUE (event_id, id_number_hash),
+    CONSTRAINT uq_event_doc_hash UNIQUE (event_id, document_file_hash)
 );
 
 -- 7. Verification Requests (Immutable verification attempts)
@@ -154,7 +155,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_reg_event ON registrations(event_id);
 CREATE INDEX IF NOT EXISTS idx_doc_hash ON identity_documents(file_hash);
 CREATE INDEX IF NOT EXISTS idx_registry_event_hash ON identity_registry(event_id, id_number_hash);
-CREATE INDEX IF NOT EXISTS idx_registry_file_hash ON identity_registry(document_file_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_event_file_hash ON identity_registry(event_id, document_file_hash);
 CREATE INDEX IF NOT EXISTS idx_verif_reg ON verification_requests(registration_id);
 CREATE INDEX IF NOT EXISTS idx_signals_result ON verification_signals(result_id);
 CREATE INDEX IF NOT EXISTS idx_cases_status ON review_cases(status);

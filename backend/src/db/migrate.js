@@ -43,7 +43,30 @@ async function runMigrations() {
     .filter(line => !line.trim().startsWith('--'))
     .join('\n');
 
-  const { exec } = require('./connection');
+  const { exec, query, isPostgres } = require('./connection');
+
+  // If table already exists with legacy duplicate file hashes, deduplicate before applying unique index
+  try {
+    const tableCheckSql = isPostgres
+      ? `SELECT table_name FROM information_schema.tables WHERE table_name = 'identity_registry'`
+      : `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'identity_registry'`;
+    const checkRes = await query(tableCheckSql);
+    if (checkRes.rows && checkRes.rows.length > 0) {
+      await query(`
+        DELETE FROM identity_registry
+        WHERE id NOT IN (
+          SELECT id FROM (
+            SELECT MIN(id) AS id
+            FROM identity_registry
+            GROUP BY event_id, document_file_hash
+          ) AS keep_rows
+        )
+      `);
+    }
+  } catch (_tableNotYetExisting) {
+    // Expected on clean installation when table does not exist yet
+  }
+
   await exec(cleanSql);
 
   console.log('[Migration] Schema tables and indexes verified successfully.');
@@ -93,11 +116,13 @@ async function seedDefaults() {
     eventId = eventCheck.rows[0].id;
   }
 
-  // 3. Default Admin User
+  // 3. Admin User (Demo / Local default credentials)
   const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@verifyid.local';
   const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'Admin@12345';
-  if (process.env.NODE_ENV === 'production' && adminPassword === 'Admin@12345') {
-    console.warn('[Security Warning] Default seed admin password is being used in production. Set SEED_ADMIN_PASSWORD in your environment.');
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD === 'Admin@12345') {
+      throw new Error('[Fatal Security Error] Production mode requires an explicit, non-default SEED_ADMIN_PASSWORD environment variable.');
+    }
   }
 
   const adminCheck = await query('SELECT id FROM users WHERE email = $1', [adminEmail]);
@@ -110,14 +135,16 @@ async function seedDefaults() {
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [adminId, orgId, adminEmail, passwordHash, 'System Administrator', 'admin']
     );
-    console.log(`[Migration] Seeded default admin user: ${adminEmail}`);
+    console.log(`[Migration] Seeded admin user: ${adminEmail}`);
   }
 
-  // 4. Default Reviewer User
+  // 4. Reviewer User (Demo / Local default credentials)
   const reviewerEmail = process.env.SEED_REVIEWER_EMAIL || 'reviewer@verifyid.local';
   const reviewerPassword = process.env.SEED_REVIEWER_PASSWORD || 'Reviewer@12345';
-  if (process.env.NODE_ENV === 'production' && reviewerPassword === 'Reviewer@12345') {
-    console.warn('[Security Warning] Default seed reviewer password is being used in production. Set SEED_REVIEWER_PASSWORD in your environment.');
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.SEED_REVIEWER_PASSWORD || process.env.SEED_REVIEWER_PASSWORD === 'Reviewer@12345') {
+      throw new Error('[Fatal Security Error] Production mode requires an explicit, non-default SEED_REVIEWER_PASSWORD environment variable.');
+    }
   }
 
   const reviewerCheck = await query('SELECT id FROM users WHERE email = $1', [reviewerEmail]);

@@ -97,7 +97,13 @@ async function query(text, params = []) {
       };
     }
   } catch (err) {
-    console.error('[DB Error]', err.message, '\nQuery:', sqliteQuery, '\nParams:', params);
+    console.error('[DB Error]', {
+      message: err.message,
+      code: err.code,
+      querySnippet: sqliteQuery.trim().slice(0, 120),
+      paramCount: params.length,
+      engine: dbType,
+    });
     throw err;
   }
 }

@@ -1,6 +1,6 @@
 """
 Verification Decision & Evidence Scoring Engine
-Aggregates atomic signals into explainable verification decisions with calibrated evidence and risk scores.
+Aggregates atomic signals into explainable verification decisions with heuristic evidence and risk scores.
 """
 
 from typing import Optional, List, Dict, Any
@@ -23,7 +23,7 @@ class AtomicSignal(BaseModel):
 
 class VerificationEngineResult(BaseModel):
     decision: str             # "ELIGIBLE", "INELIGIBLE", "REVIEW"
-    confidence_score: float   # Calibrated confidence (0.00 - 1.00)
+    confidence_score: float   # Heuristic confidence score (0.00 - 1.00)
     evidence_score: float     # Positive corroboration weight (0.00 - 1.00)
     risk_score: float         # Risk and anomaly indicator weight (0.00 - 1.00)
     summary_reason: str
@@ -34,7 +34,10 @@ class VerificationEngineResult(BaseModel):
 def check_eligibility(
     age: Optional[int],
     min_age: int = 18,
-    max_age: int = 100
+    max_age: int = 100,
+    alt_age: Optional[int] = None,
+    dob_ambiguous: bool = False,
+    raw_dob: Optional[str] = None,
 ) -> AtomicSignal:
     if age is None:
         return AtomicSignal(
@@ -44,6 +47,19 @@ def check_eligibility(
             reason="Date of birth could not be reliably extracted to calculate age eligibility.",
             details={"min_age": min_age, "max_age": max_age, "calculated_age": None}
         )
+
+    # If date is ambiguous (e.g. DD/MM vs MM/DD) and interpretations cross eligibility boundaries
+    if dob_ambiguous and alt_age is not None:
+        primary_eligible = (min_age <= age <= max_age)
+        alt_eligible = (min_age <= alt_age <= max_age)
+        if primary_eligible != alt_eligible:
+            return AtomicSignal(
+                signal_type="ELIGIBILITY",
+                status="REVIEW",
+                score=0.50,
+                reason=f"Date of birth '{raw_dob}' is ambiguous (could represent age {age} or {alt_age}) and materially affects the {min_age}-{max_age} eligibility requirement.",
+                details={"min_age": min_age, "max_age": max_age, "calculated_age": age, "alt_age": alt_age, "ambiguous": True}
+            )
 
     if age < min_age:
         return AtomicSignal(
@@ -68,7 +84,7 @@ def check_eligibility(
         status="PASSED",
         score=1.0,
         reason=f"Applicant age ({age}) satisfies the configured eligibility requirement ({min_age} to {max_age} years).",
-        details={"min_age": min_age, "max_age": max_age, "calculated_age": age}
+        details={"min_age": min_age, "max_age": max_age, "calculated_age": age, "ambiguous": dob_ambiguous}
     )
 
 
@@ -146,7 +162,14 @@ def evaluate_verification(
     ))
 
     # 4. Eligibility Check Signal
-    eligibility_signal = check_eligibility(extracted.calculated_age, min_age, max_age)
+    eligibility_signal = check_eligibility(
+        extracted.calculated_age,
+        min_age,
+        max_age,
+        alt_age=extracted.dob_alternative_age,
+        dob_ambiguous=extracted.dob_ambiguous,
+        raw_dob=extracted.raw_date_of_birth,
+    )
     signals.append(eligibility_signal)
 
     # 5. Registration Name Match Signal
@@ -240,7 +263,7 @@ def evaluate_verification(
 
     risk_score = round(min(1.0, risk), 2)
 
-    # Calibrated confidence score based on corroborated evidence penalized by detected risk
+    # Heuristic confidence score based on corroborated evidence penalized by detected risk
     confidence_score = round(max(0.10, min(0.98, evidence_score * (1.0 - (risk_score * 0.7)))), 2)
 
     # -------------------------------------------------------------
@@ -253,6 +276,7 @@ def evaluate_verification(
 
     # Rule 2: Critical issues route to REVIEW
     elif (
+        eligibility_signal.status == "REVIEW" or
         ocr_status == "REVIEW" or
         quality_res.status in ("FAILED", "REVIEW") or
         tamper_res.risk_level in ("MEDIUM", "HIGH") or
@@ -264,6 +288,8 @@ def evaluate_verification(
     ):
         decision = "REVIEW"
         reasons = []
+        if eligibility_signal.status == "REVIEW":
+            reasons.append(eligibility_signal.reason)
         if ocr_status == "REVIEW":
             reasons.append("incomplete OCR field extraction")
         if quality_res.status != "PASSED":

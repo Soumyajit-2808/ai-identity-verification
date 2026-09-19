@@ -62,7 +62,7 @@ VerifyID AI is a production-oriented, multi-tenant identity and eligibility veri
 - **Rationale**: An automated check can have high evidence corroboration while simultaneously detecting anomaly risks. The platform explicitly decomposes verification into:
   - **Evidence Score** ($0.0 \dots 1.0$): Degree to which positive identity claims were corroborated.
   - **Anomaly Risk Score** ($0.0 \dots 1.0$): Degree to which quality defects, tampering indicators, or discrepancies were observed.
-  - **Calibrated Confidence** ($0.10 \dots 0.98$): Calibrated representation computed as $\text{Evidence} \times (1.0 - 0.7 \times \text{Risk})$.
+  - **Heuristic Confidence Score** ($0.10 \dots 0.98$): Explainable score computed as $\text{Evidence} \times (1.0 - 0.7 \times \text{Risk})$. Note: this is a deterministic heuristic formula, not a statistically calibrated probability distribution.
 
 ### 4. Conservative Decision Policy
 - **Decision**: Three distinct decision states: `ELIGIBLE`, `INELIGIBLE`, and `REVIEW`.

@@ -5,8 +5,19 @@ Provides robust date parsing, semantic validation, and document-specific format 
 
 import re
 from datetime import date, datetime
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Tuple, Dict, Any, Set
 from pydantic import BaseModel
+
+# Canonical supported ID types across all layers
+CANONICAL_ID_TYPES: Set[str] = {
+    "PASSPORT",
+    "DRIVING_LICENSE",
+    "STUDENT_ID",
+    "NATIONAL_ID",
+    "AADHAAR",
+    "PAN",
+    "VOTER_ID",
+}
 
 
 class ExtractedIdentity(BaseModel):
@@ -17,6 +28,9 @@ class ExtractedIdentity(BaseModel):
     id_number: Optional[str] = None
     id_type: str = "UNKNOWN"
     institution: Optional[str] = None
+    dob_ambiguous: bool = False
+    dob_alternative_age: Optional[int] = None
+    dob_alternative_date: Optional[str] = None
 
 
 # Known document header lines to ignore when extracting personal names
@@ -44,11 +58,20 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def parse_date_of_birth(text: str) -> Tuple[Optional[str], Optional[int], Optional[str]]:
+def calculate_age_from_date(birth_date: date) -> int:
+    today = date.today()
+    age = today.year - birth_date.year
+    if (today.month, today.day) < (birth_date.month, birth_date.day):
+        age -= 1
+    return age
+
+
+def parse_date_of_birth(text: str) -> Tuple[Optional[str], Optional[int], Optional[str], bool, Optional[int], Optional[str]]:
     """
     Search for date-of-birth patterns, validate calendar semantics,
+    detect ambiguous date representations (e.g. DD/MM vs MM/DD),
     and calculate accurate age relative to today's date.
-    Returns: (iso_date_string, calculated_age, raw_matched_string)
+    Returns: (iso_date_string, calculated_age, raw_matched_string, is_ambiguous, alt_age, alt_date_iso)
     """
     # 1. Regex patterns covering common international and Indian date formats
     patterns = [
@@ -80,39 +103,57 @@ def parse_date_of_birth(text: str) -> Tuple[Optional[str], Optional[int], Option
     current_year = date.today().year
 
     for match_str in found_matches:
+        # Check for numeric DD/MM vs MM/DD ambiguity (e.g. 05/06/2004 vs 06/05/2004)
+        numeric_match = re.match(r"^(\d{1,2})[/\-\.](\d{1,2})[/\-\.]((?:19|20)?\d{2})$", match_str.strip())
+        is_ambiguous = False
+        alt_age = None
+        alt_date_iso = None
+
+        if numeric_match:
+            p1 = int(numeric_match.group(1))
+            p2 = int(numeric_match.group(2))
+            yr = int(numeric_match.group(3))
+            if yr < 100:
+                yr += 1900 if yr >= 25 else 2000
+
+            # If both parts <= 12 and differ, date is calendar-ambiguous
+            if 1 <= p1 <= 12 and 1 <= p2 <= 12 and p1 != p2:
+                try:
+                    d_dmy = date(yr, p2, p1)  # DD/MM/YYYY
+                    d_mdy = date(yr, p1, p2)  # MM/DD/YYYY
+                    today = date.today()
+                    if 1900 <= yr <= current_year and d_dmy <= today and d_mdy <= today:
+                        age_dmy = calculate_age_from_date(d_dmy)
+                        age_mdy = calculate_age_from_date(d_mdy)
+                        if 0 <= age_dmy <= 125 and 0 <= age_mdy <= 125:
+                            is_ambiguous = True
+                            alt_age = age_mdy
+                            alt_date_iso = d_mdy.strftime("%Y-%m-%d")
+                            return d_dmy.strftime("%Y-%m-%d"), age_dmy, match_str, is_ambiguous, alt_age, alt_date_iso
+                except ValueError:
+                    pass
+
         # Normalize separators
         clean_match = re.sub(r"[\.\-]", "/", match_str)
-        # Try both normalized and original strings
         candidate_strings = [clean_match, match_str]
 
         for cand in candidate_strings:
             for fmt in date_formats:
                 try:
                     parsed_date = datetime.strptime(cand, fmt).date()
-
-                    # Semantic validity: year must be reasonable (1900 to present)
                     if parsed_date.year < 1900 or parsed_date.year > current_year:
                         continue
-
-                    # Date cannot be in the future
                     today = date.today()
                     if parsed_date > today:
                         continue
-
-                    # Accurate age calculation
-                    age = today.year - parsed_date.year
-                    if (today.month, today.day) < (parsed_date.month, parsed_date.day):
-                        age -= 1
-
-                    # Reasonable human age check (0 to 125)
+                    age = calculate_age_from_date(parsed_date)
                     if 0 <= age <= 125:
                         iso_str = parsed_date.strftime("%Y-%m-%d")
-                        return iso_str, age, match_str
-
+                        return iso_str, age, match_str, is_ambiguous, alt_age, alt_date_iso
                 except ValueError:
                     continue
 
-    return None, None, None
+    return None, None, None, False, None, None
 
 
 def extract_id_type_and_number(text: str) -> Tuple[Optional[str], str]:
@@ -137,36 +178,33 @@ def extract_id_type_and_number(text: str) -> Tuple[Optional[str], str]:
     if passport_match and "PASSPORT" in upper:
         return passport_match.group(1).upper(), "PASSPORT"
 
-    # 4. Driving License: DL-XX-XXXX-XXXXXXX or standard 15-16 alphanumeric
-    dl_match = re.search(r"\b([A-Z]{2}[0-9]{2}[A-Z0-9]{11,12})\b", upper)
+    # 4. Driving License: DL-XX-XXXX-XXXXXXX or standard 13-16 alphanumeric (with optional hyphens/spaces)
+    dl_match = re.search(r"\b([A-Z]{2}[- ]?[0-9]{2}[- ]?[A-Z0-9]{7,12})\b", upper)
     if dl_match and ("DRIVING" in upper or "LICENCE" in upper or "LICENSE" in upper):
-        return dl_match.group(1), "DRIVING_LICENSE"
+        return dl_match.group(1).replace(" ", ""), "DRIVING_LICENSE"
 
     # 5. Voter ID (EPIC): 3 letters followed by 7 digits (e.g. ABC1234567)
     voter_match = re.search(r"\b([A-Z]{3}[0-9]{7})\b", upper)
     if voter_match and ("ELECTION" in upper or "VOTER" in upper or "EPIC" in upper):
         return voter_match.group(1), "VOTER_ID"
 
-    # 6. Student ID: Roll / Registration / Student ID patterns
+    # 6. Student ID: Roll / Registration / Student ID patterns with explicit keyword
     student_match = re.search(r"(?:STUDENT\s+ID|ROLL\s+NO|ENROLLMENT|REG(?:ISTRATION)?\s+NO)[\s:\-_]+([A-Z0-9\-]{4,15})\b", upper)
     if student_match:
         return student_match.group(1), "STUDENT_ID"
 
-    # 7. Generic Fallback ID Number
-    generic_patterns = [
-        r"\b([A-Z]{2,4}[0-9]{6,10})\b",
-        r"\b([0-9]{4}\s[0-9]{4}\s[0-9]{4})\b",
-        r"\b([A-Z0-9]{8,14})\b",
-    ]
-    for pat in generic_patterns:
-        m = re.search(pat, upper)
-        if m:
-            detected_type = "UNKNOWN"
-            if "STUDENT" in upper or "COLLEGE" in upper or "UNIVERSITY" in upper:
-                detected_type = "STUDENT_ID"
-            elif "AADHAAR" in upper:
-                detected_type = "AADHAAR"
-            return m.group(1), detected_type
+    # 7. Explicitly Labeled Document ID Pattern
+    # Only matches when preceded by an explicit identifier label (e.g. "ID NO: 12345678", "CARD NUMBER: ABC12345")
+    # Never matches arbitrary words from OCR text
+    labeled_match = re.search(
+        r"(?:ID\s*(?:NO|NUMBER)?|CARD\s*(?:NO|NUMBER)?|DOC(?:UMENT)?\s*(?:NO|NUMBER)?|IDENTIFICATION\s*(?:NO|NUMBER)?)[\s:\-_#]+([A-Z0-9\-]{5,18})\b",
+        upper
+    )
+    if labeled_match:
+        candidate_id = labeled_match.group(1).strip("-")
+        dictionary_words = {"CERTIFICATE", "GOVERNMENT", "DEPARTMENT", "AUTHORITY", "COMMISSION", "FEDERATION", "REGISTRATION"}
+        if len(candidate_id) >= 5 and candidate_id not in dictionary_words:
+            return candidate_id, "UNKNOWN"
 
     # Determine type by keywords if number not extracted
     if "AADHAAR" in upper or "UIDAI" in upper:
@@ -179,6 +217,8 @@ def extract_id_type_and_number(text: str) -> Tuple[Optional[str], str]:
         return None, "DRIVING_LICENSE"
     if "STUDENT" in upper or "COLLEGE" in upper or "UNIVERSITY" in upper:
         return None, "STUDENT_ID"
+    if "VOTER" in upper or "ELECTION" in upper:
+        return None, "VOTER_ID"
 
     return None, "UNKNOWN"
 
@@ -300,7 +340,7 @@ def normalize_identity_document(raw_text: str, lines: List[str] = None) -> Extra
     if not lines:
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
-    iso_dob, age, raw_dob = parse_date_of_birth(raw_text)
+    iso_dob, age, raw_dob, is_ambig, alt_age, alt_date = parse_date_of_birth(raw_text)
     id_num, id_type = extract_id_type_and_number(raw_text)
     name = extract_name(raw_text, lines)
     institution = extract_institution(raw_text, lines)
@@ -313,4 +353,7 @@ def normalize_identity_document(raw_text: str, lines: List[str] = None) -> Extra
         id_number=id_num,
         id_type=id_type,
         institution=institution,
+        dob_ambiguous=is_ambig,
+        dob_alternative_age=alt_age,
+        dob_alternative_date=alt_date,
     )

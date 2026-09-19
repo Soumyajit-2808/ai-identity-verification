@@ -59,6 +59,7 @@ The VerifyID AI Verification Engine synthesizes multiple atomic verification sig
 - **Outcomes**:
   - Age $<$ `min_age` or Age $>$ `max_age` $\to$ `FAILED` (Forces overall `INELIGIBLE` decision).
   - Unparseable date of birth $\to$ `REVIEW`.
+  - Ambiguous date of birth crossing eligibility boundaries $\to$ `REVIEW`.
   - Age within range $\to$ `PASSED`.
 
 ### 7. Registration Name Matching Signal (`NAME_MATCH`)

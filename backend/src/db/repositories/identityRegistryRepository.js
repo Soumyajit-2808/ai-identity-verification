@@ -105,7 +105,25 @@ async function checkIdentityReuse(eventId, rawIdNumber, currentRegistrationName,
 }
 
 /**
+ * Determine if an error is an expected database uniqueness constraint violation.
+ */
+function isUniqueConstraintViolation(err) {
+  if (!err) return false;
+  if (err.code === '23505') return true;
+  if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || err.code === 'SQLITE_CONSTRAINT') return true;
+  if (typeof err.message === 'string' && (
+    err.message.includes('UNIQUE constraint failed') ||
+    err.message.includes('unique constraint') ||
+    err.message.includes('duplicate key value')
+  )) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Persist identity to the registry inside an atomic transaction.
+ * Concurrency-safe: handles same-person resubmission while enforcing database uniqueness.
  */
 async function registerIdentity({
   eventId,
@@ -120,12 +138,16 @@ async function registerIdentity({
   const maskedId = maskIdNumber(rawIdNumber);
   const id = uuidv4();
 
-  await runner(
+  const res = await runner(
     `INSERT INTO identity_registry (
        id, event_id, registration_id, id_number_hash, id_number_masked,
        id_type, registered_name, document_file_hash
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     ON CONFLICT (event_id, id_number_hash) DO NOTHING`,
+     ON CONFLICT (event_id, id_number_hash) DO UPDATE SET
+       registration_id = excluded.registration_id,
+       document_file_hash = excluded.document_file_hash,
+       registered_name = excluded.registered_name
+     RETURNING id`,
     [
       id,
       eventId,
@@ -138,7 +160,8 @@ async function registerIdentity({
     ]
   );
 
-  return { id, idNumberHash: idHash, idNumberMasked: maskedId };
+  const persistedId = (res && res.rows && res.rows[0] && res.rows[0].id) ? res.rows[0].id : id;
+  return { id: persistedId, idNumberHash: idHash, idNumberMasked: maskedId };
 }
 
 module.exports = {
@@ -147,4 +170,6 @@ module.exports = {
   checkDuplicateFile,
   checkIdentityReuse,
   registerIdentity,
+  isUniqueConstraintViolation,
 };
+

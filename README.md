@@ -36,7 +36,7 @@ flowchart TD
         QualityAnalyzer["Image Quality & Blurriness Analyzer"]
         TamperAnalyzer["Document Tamper & EXIF Risk Engine"]
         FaceEngine["Biometric Face Verification (DeepFace / FaceNet512)"]
-        DecisionEngine["Calibrated Decision & Evidence Engine"]
+        DecisionEngine["Heuristic Decision & Evidence Engine"]
     end
 
     subgraph DataPersistence["Persistence Tier"]
@@ -67,8 +67,8 @@ flowchart TD
 ### Architectural Highlights
 - **Decoupled Gateway & AI Worker**: The Node.js Express service manages client authentication, role-based access control, file sanitization, and database persistence, while the FastAPI Python service manages computational OCR and computer vision pipelines.
 - **Dual Database Engine**: The repository layer natively supports both **PostgreSQL** (for production clustering) and **SQLite `node:sqlite` DatabaseSync** (for zero-dependency local development and CI testing) with unified positional parameter binding.
-- **Content-Addressed Storage**: All uploaded documents and biometric selfies are verified via magic-byte header inspection (JPEG, PNG, WebP, PDF) and stored using SHA-256 checksums to eliminate path traversal vulnerabilities.
-- **Explainable Evidence Scoring**: Instead of arbitrary heuristic scores, the decision engine evaluates 8 atomic verification signals (`PASS`, `REVIEW`, `FAIL`, or `SKIPPED`) to compute a mathematically calibrated evidence score ($0.0 \dots 1.0$) and an inverse risk score.
+- **Content-Addressed Storage**: All uploaded documents and biometric selfies are verified via magic-byte header inspection (JPEG, PNG, WebP; PDFs are rejected) and stored using SHA-256 checksums to eliminate path traversal vulnerabilities.
+- **Explainable Evidence Scoring**: Instead of opaque decisions, the decision engine evaluates atomic verification signals (`PASS`, `REVIEW`, `FAIL`, or `SKIPPED`) to compute an explainable heuristic evidence score ($0.0 \dots 1.0$) and an inverse risk score.
 
 ---
 

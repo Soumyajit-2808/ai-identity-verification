@@ -67,6 +67,36 @@ router.patch(['/review-cases/:id', '/reviews/:id'], requireAuth, requireRole(['r
       return res.status(404).json({ success: false, error: 'Review case not found or unauthorized.' });
     }
 
+    // Concurrency / optimistic locking check if expectedStatus provided
+    const { expectedStatus } = req.body;
+    if (expectedStatus && currentCase.status !== expectedStatus) {
+      return res.status(409).json({
+        success: false,
+        error: `Review case status conflict: current status is '${currentCase.status}' (expected '${expectedStatus}').`,
+        code: 'CASE_STATUS_CONFLICT',
+      });
+    }
+
+    // Guard against modifying already resolved cases without administrator privilege
+    const isAlreadyResolved = ['APPROVED', 'REJECTED'].includes(currentCase.status);
+    if (isAlreadyResolved && req.user.role !== 'admin') {
+      return res.status(409).json({
+        success: false,
+        error: `Case is already resolved as '${currentCase.status}' and cannot be modified by reviewer. Administrator override required.`,
+        code: 'CASE_ALREADY_RESOLVED',
+      });
+    }
+
+    // Require resolutionReason when marking case APPROVED or REJECTED
+    if (['APPROVED', 'REJECTED'].includes(status)) {
+      if (!resolutionReason || typeof resolutionReason !== 'string' || !resolutionReason.trim()) {
+        return res.status(400).json({
+          success: false,
+          error: 'A valid resolution reason is required when approving or rejecting a review case.',
+        });
+      }
+    }
+
     const updated = await updateReviewCase(req.params.id, {
       status,
       assignedTo: req.user.id,

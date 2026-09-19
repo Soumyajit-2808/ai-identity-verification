@@ -12,6 +12,8 @@
  * - Concurrency handling
  */
 
+process.env.DATABASE_URL = 'sqlite::memory:';
+
 const fs = require('fs');
 const path = require('path');
 const request = require('supertest');

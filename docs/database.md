@@ -61,7 +61,9 @@ Enforces uniqueness across application restarts and concurrent requests.
 - `id_number_hash` (TEXT, Salted HMAC-SHA-256)
 - `id_number_masked` (TEXT)
 - `id_type` (TEXT), `registered_name` (TEXT), `document_file_hash` (TEXT)
-- **Constraint**: `UNIQUE (event_id, id_number_hash)` — prevents simultaneous duplicate ID submissions via database lock.
+- **Constraints**:
+  - `UNIQUE (event_id, id_number_hash)` — prevents concurrent identity reuse across different participants.
+  - `UNIQUE (event_id, document_file_hash)` — enforces database-level concurrency safety against exact duplicate document uploads.
 
 ### 6. `verification_requests`
 Immutable audit log of verification invocations.

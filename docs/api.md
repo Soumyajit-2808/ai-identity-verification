@@ -1,28 +1,23 @@
 # REST API Specification & Integration Reference
 
-This document provides complete documentation for the AI Identity Verification Platform REST APIs, including request formats, response schemas, error structures, and authorization headers.
+This document provides complete documentation for the AI Identity Verification Platform REST APIs, including exact paths, request payloads, response schemas, error envelopes, and authorization requirements.
 
 ---
 
 ## 1. Global Conventions & Standards
 
-- **Base URL**: `http://localhost:3000/api` (Backend Gateway) or `http://localhost:8001` (Direct AI Service)
-- **Content Types**:
-  - `multipart/form-data` for file upload endpoints (`/api/verify`).
-  - `application/json` for standard queries, mutations, and resolutions.
-- **Request Tracing**:
-  - Clients may provide an `X-Request-Id` header (UUIDv4). If omitted, the gateway generates one automatically and echoes it back in every response header.
+- **Base URL**: `http://localhost:3000/api` (Backend Gateway) or `http://127.0.0.1:8001` (Internal AI Service)
+- **Supported Media Formats**: `JPEG`, `PNG`, `WebP` (Max 12MB). PDF documents are explicitly **not supported**.
+- **Request Tracing**: Clients may supply an `X-Request-Id` header (UUIDv4). If omitted, the gateway generates one automatically and echoes it back in every response header.
+- **Canonical ID Types**: `['PASSPORT', 'DRIVING_LICENSE', 'STUDENT_ID', 'NATIONAL_ID', 'AADHAAR', 'PAN', 'VOTER_ID']`.
 - **Error Format**:
-  All non-2xx responses adhere to the standard error envelope:
+  All non-2xx responses adhere to the standard application error envelope:
   ```json
   {
     "success": false,
-    "error": {
-      "code": "VALIDATION_ERROR",
-      "message": "A valid identity document file is required.",
-      "requestId": "550e8400-e29b-41d4-a716-446655440000",
-      "details": []
-    }
+    "error": "Detailed human-readable error description.",
+    "code": "ERROR_CODE",
+    "requestId": "550e8400-e29b-41d4-a716-446655440000"
   }
   ```
 
@@ -37,7 +32,7 @@ Authorization: Bearer <jwt_token>
 ```
 
 ### POST /api/auth/login
-Authenticates an administrative or review operator.
+Authenticates an administrator or review operator.
 
 **Request Body (`application/json`)**:
 ```json
@@ -64,19 +59,19 @@ Authenticates an administrative or review operator.
 
 ---
 
-## 3. Public Verification Endpoints
+## 3. Verification Endpoints
 
 ### POST /api/verify
-Submits an identity document and optional selfie for automated OCR extraction, tamper risk evaluation, face comparison, and eligibility verification.
+Submits an identity document image and optional selfie for automated OCR extraction, image quality analysis, tamper-risk evaluation, facial geometry comparison, and eligibility verification.
 
 **Request (`multipart/form-data`)**:
 | Field | Type | Required | Description |
 | :--- | :--- | :---: | :--- |
 | `file` (or `document`) | File (Binary) | **Yes** | Identity document image (JPEG, PNG, WebP, max 12MB). |
-| `selfie` | File (Binary) | No | Optional camera selfie for biometric face comparison. |
-| `registration_name` (or `fullName`) | String | **Yes** | Applicant's registered full name. |
-| `event_code` (or `eventId`) | String | No | Target event code (Defaults to active event `HACK2026`). |
-| `email` | String | No | Applicant's registered email address for notification. |
+| `selfie` | File (Binary) | No | Optional camera selfie for facial biometrics comparison. |
+| `registration_name` (or `fullName`) | String | **Yes** | Applicant's registered full name (max 150 chars). |
+| `event_code` (or `eventId`) | String | No | Target event code (defaults to active event `HACK2026`). |
+| `email` | String | No | Applicant's email address. |
 | `phone` | String | No | Applicant's contact phone number. |
 
 **Response (`200 OK`)**:
@@ -125,7 +120,7 @@ Submits an identity document and optional selfie for automated OCR extraction, t
       "signal_type": "TAMPER",
       "status": "PASSED",
       "score": 1.0,
-      "reason": "Document shows natural compression characteristics and no detected manipulation anomalies.",
+      "reason": "No basic digital manipulation or compression anomaly signals detected by automated checks.",
       "details": { "risk_level": "LOW", "editing_tools": [] }
     },
     {
@@ -139,8 +134,8 @@ Submits an identity document and optional selfie for automated OCR extraction, t
       "signal_type": "NAME_MATCH",
       "status": "PASSED",
       "score": 1.0,
-      "reason": "Registration name 'Jane Doe' matched extracted name 'Jane Doe' (score: 1.0, method: exact_token_set).",
-      "details": { "method": "exact_token_set", "score": 1.0 }
+      "reason": "Registration name 'Jane Doe' matched extracted name 'Jane Doe' (score: 1.0, method: EXACT_MATCH).",
+      "details": { "method": "EXACT_MATCH", "score": 1.0 }
     },
     {
       "signal_type": "DUPLICATE_FILE",
@@ -160,79 +155,95 @@ Submits an identity document and optional selfie for automated OCR extraction, t
 }
 ```
 
----
+### GET /api/verifications
+Retrieves historical verification records scoped strictly to the authenticated user's organization.
 
-### GET /api/history
-Returns past verification registrations scoped to the current event.
+**Headers**:
+`Authorization: Bearer <jwt_token>` (`role: reviewer` or `admin`)
 
 **Query Parameters**:
-- `eventId` (optional): Filter registrations by event UUID or code (default: `HACK2026`).
+- `eventId` (optional): Filter registrations by event UUID.
 - `limit` (optional): Maximum items to return (default: `50`).
 
 **Response (`200 OK`)**:
 ```json
 {
   "success": true,
-  "data": [
+  "count": 1,
+  "verifications": [
     {
-      "id": "6c457f5c-dfbd-4aa4-8f7d-a2f00e9cfbc1",
-      "full_name": "Jane Doe",
+      "request_id": "6c457f5c-dfbd-4aa4-8f7d-a2f00e9cfbc1",
+      "registration_name": "Jane Doe",
       "email": "jane.doe@example.com",
-      "status": "APPROVED",
       "decision": "ELIGIBLE",
-      "evidence_score": 0.94,
+      "confidence_score": 0.94,
+      "event_name": "AI Build Challenge 2026",
       "created_at": "2026-09-19T13:20:00.000Z"
     }
   ]
 }
 ```
 
+### GET /api/verifications/:id
+Retrieves detailed verification records, signals, and sanitized document metadata by verification request UUID.
+
+**Headers**:
+`Authorization: Bearer <jwt_token>` (`role: reviewer` or `admin`)
+
 ---
 
-## 4. Operator & Review Queue APIs
+## 4. Operator Review Queue APIs
 
-### GET /api/reviews
-Retrieves pending verification review cases for operator evaluation.
+### GET /api/review-cases
+Retrieves manual review cases for operator evaluation scoped to the user's organization.
 
 **Headers**:
 `Authorization: Bearer <jwt_token>` (`role: reviewer` or `admin`)
 
 **Query Parameters**:
-- `status` (optional): `OPEN`, `IN_REVIEW`, `APPROVED`, `REJECTED`, or `ESCALATED`.
+- `status` (optional): Filter by `OPEN`, `IN_REVIEW`, `APPROVED`, `REJECTED`, or `ESCALATED`.
+- `eventId` (optional): Filter by event UUID.
+- `limit` (optional): Maximum records (default: `50`).
 
 **Response (`200 OK`)**:
 ```json
 {
   "success": true,
-  "data": [
+  "count": 1,
+  "cases": [
     {
       "id": "33333333-3333-3333-3333-333333333331",
       "registration_id": "8f309a20-b487-4b11-9a1c-1c5c994ad240",
-      "applicant_name": "Alex Johnson",
-      "applicant_email": "alex.j@example.com",
+      "registration_name": "Alex Johnson",
+      "email": "alex.j@example.com",
       "status": "OPEN",
-      "reason": "Name mismatch: Document shows 'Alexander M Johnson' (68% similarity)",
-      "evidence_score": 0.62,
-      "created_at": "2026-09-19T13:25:00.000Z",
-      "signals": []
+      "priority": "HIGH",
+      "summary_reason": "Manual operator review is required due to: registration name discrepancy.",
+      "created_at": "2026-09-19T13:25:00.000Z"
     }
   ]
 }
 ```
 
----
-
-### POST /api/reviews/:id/decision
-Resolves a manual review case with an authoritative operator decision and audit reason.
+### GET /api/review-cases/:id
+Fetches complete details for a single review case including extracted identity attributes, signals, and associated documents.
 
 **Headers**:
-`Authorization: Bearer <jwt_token>`
+`Authorization: Bearer <jwt_token>` (`role: reviewer` or `admin`)
+
+### PATCH /api/review-cases/:id
+Applies an operator decision (`APPROVED`, `REJECTED`, `IN_REVIEW`, `OPEN`, `ESCALATED`).
+
+**Headers**:
+`Authorization: Bearer <jwt_token>` (`role: reviewer` or `admin`)
 
 **Request Body (`application/json`)**:
 ```json
 {
-  "action": "APPROVE",
-  "notes": "Verified full middle name on government ID matches registration records."
+  "status": "APPROVED",
+  "resolutionReason": "Verified full middle name on government ID matches registration records.",
+  "reviewerNotes": "Checked document photo manually; facial features match selfie.",
+  "expectedStatus": "OPEN"
 }
 ```
 
@@ -240,9 +251,12 @@ Resolves a manual review case with an authoritative operator decision and audit 
 ```json
 {
   "success": true,
-  "message": "Review case resolved as APPROVE",
-  "caseId": "33333333-3333-3333-3333-333333333331",
-  "status": "RESOLVED"
+  "case": {
+    "id": "33333333-3333-3333-3333-333333333331",
+    "status": "APPROVED",
+    "resolution_reason": "Verified full middle name on government ID matches registration records.",
+    "resolved_at": "2026-09-19T13:30:00.000Z"
+  }
 }
 ```
 
@@ -250,22 +264,26 @@ Resolves a manual review case with an authoritative operator decision and audit 
 
 ## 5. Event Configuration APIs
 
-### PUT /api/events/:id/policy
-Updates eligibility rules and required document standards for an event.
+### GET /api/events
+Returns active public events with internal organization identifiers sanitized.
+
+### GET /api/events/:code
+Returns event details by public event code (e.g. `HACK2026`).
+
+### PATCH /api/events/:id
+Updates verification policy for an event. Scoped to the event organizer's organization.
 
 **Headers**:
-`Authorization: Bearer <jwt_token>` (`role: admin`)
+`Authorization: Bearer <jwt_token>` (`role: admin` or `organizer`)
 
 **Request Body (`application/json`)**:
 ```json
 {
-  "policy": {
-    "minAge": 18,
-    "maxAge": 30,
-    "studentRequired": true,
-    "requireSelfie": false,
-    "allowedDocTypes": ["Aadhaar", "Passport", "Student ID"]
-  }
+  "minAge": 18,
+  "maxAge": 30,
+  "allowedIdTypes": ["AADHAAR", "PASSPORT", "STUDENT_ID"],
+  "requireSelfie": true,
+  "strictNameMatching": false
 }
 ```
 
@@ -273,8 +291,15 @@ Updates eligibility rules and required document standards for an event.
 ```json
 {
   "success": true,
-  "message": "Event eligibility policy updated successfully.",
-  "eventId": "22222222-2222-2222-2222-222222222222"
+  "event": {
+    "id": "22222222-2222-2222-2222-222222222222",
+    "code": "HACK2026",
+    "min_age": 18,
+    "max_age": 30,
+    "allowed_id_types": ["AADHAAR", "PASSPORT", "STUDENT_ID"],
+    "require_selfie": true,
+    "strict_name_matching": false
+  }
 }
 ```
 
@@ -283,18 +308,7 @@ Updates eligibility rules and required document standards for an event.
 ## 6. Observability & Diagnostics
 
 ### GET /api/health
-Returns system health, database connectivity status, and AI verification service availability.
-
-**Response (`200 OK` or `503 Service Unavailable`)**:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-09-19T13:30:00.000Z",
-  "version": "2.0.0",
-  "database": { "status": "connected", "engine": "sqlite" },
-  "aiService": { "status": "connected", "latencyMs": 8 }
-}
-```
+Returns system health, database engine, and AI verification microservice status.
 
 ### GET /api/metrics
 Provides real-time verification processing counters and decision distributions scoped to the authenticated operator's organization.
@@ -322,11 +336,8 @@ Provides real-time verification processing counters and decision distributions s
 }
 ```
 
----
+### GET /api/audit-logs
+Returns audit trail logs scoped to the authenticated administrator's organization.
 
-## 7. Rate Limiting & Abuse Prevention
-
-The API Gateway enforces tiered rate limiting by IP:
-- **Global API**: 300 requests per 15-minute window (`RATE_LIMIT_EXCEEDED`).
-- **Authentication (`/api/auth/login`)**: 20 requests per 15-minute window (`AUTH_RATE_LIMIT_EXCEEDED`).
-- **ML Verification (`/api/verify`)**: 30 requests per 15-minute window (`VERIFY_RATE_LIMIT_EXCEEDED`) to prevent Denial of Service on computer vision and OCR inference.
+**Headers**:
+`Authorization: Bearer <jwt_token>` (`role: admin`)
