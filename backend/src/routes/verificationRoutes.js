@@ -183,6 +183,7 @@ router.post(
       // Add Duplicate File Signal
       if (duplicateFileCheck.isDuplicate) {
         signals.push({
+          signal_type: 'DUPLICATE_FILE',
           signalType: 'DUPLICATE_FILE',
           status: 'REVIEW',
           score: 0.0,
@@ -194,6 +195,7 @@ router.post(
         summaryReasons.push('document file was previously submitted');
       } else {
         signals.push({
+          signal_type: 'DUPLICATE_FILE',
           signalType: 'DUPLICATE_FILE',
           status: 'PASSED',
           score: 1.0,
@@ -206,6 +208,7 @@ router.post(
       if (identityReuseCheck.isReused) {
         if (identityReuseCheck.isSamePersonResubmission) {
           signals.push({
+            signal_type: 'IDENTITY_REUSE',
             signalType: 'IDENTITY_REUSE',
             status: 'PASSED',
             score: 0.95,
@@ -214,6 +217,7 @@ router.post(
           });
         } else {
           signals.push({
+            signal_type: 'IDENTITY_REUSE',
             signalType: 'IDENTITY_REUSE',
             status: 'REVIEW',
             score: 0.0,
@@ -226,6 +230,7 @@ router.post(
         }
       } else if (identityReuseCheck.canCheck) {
         signals.push({
+          signal_type: 'IDENTITY_REUSE',
           signalType: 'IDENTITY_REUSE',
           status: 'PASSED',
           score: 1.0,
@@ -234,6 +239,7 @@ router.post(
         });
       } else {
         signals.push({
+          signal_type: 'IDENTITY_REUSE',
           signalType: 'IDENTITY_REUSE',
           status: 'REVIEW',
           score: 0.50,

@@ -1,699 +1,1785 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>VerifyID AI</title>
-
-		<style>
-			* {
-				box-sizing: border-box;
-			}
-
-			body {
-				margin: 0;
-				font-family: Inter, Arial, sans-serif;
-				background: linear-gradient(135deg, #eef4ff, #f8fafc);
-				color: #172033;
-			}
-
-			.navbar {
-				background: #0f172a;
-				color: white;
-				padding: 18px 7%;
-				display: flex;
-				justify-content: space-between;
-				align-items: center;
-			}
-
-			.logo {
-				font-size: 22px;
-				font-weight: 800;
-			}
-
-			.badge {
-				background: #1e293b;
-				padding: 7px 12px;
-				border-radius: 20px;
-				font-size: 12px;
-			}
-
-			.container {
-				width: min(1100px, 92%);
-				margin: 40px auto;
-			}
-
-			.hero {
-				text-align: center;
-				margin-bottom: 30px;
-			}
-
-			.hero h1 {
-				font-size: 42px;
-				margin-bottom: 10px;
-			}
-
-			.hero p {
-				color: #64748b;
-				font-size: 17px;
-			}
-
-			.grid {
-				display: grid;
-				grid-template-columns:
-					minmax(300px, 1fr)
-					minmax(300px, 1fr);
-				gap: 24px;
-			}
-
-			.card {
-				background: white;
-				border-radius: 18px;
-				padding: 26px;
-				box-shadow: 0 12px 35px rgba(15, 23, 42, 0.08);
-			}
-
-			.card h2 {
-				margin-top: 0;
-			}
-
-			label {
-				display: block;
-				margin-top: 18px;
-				margin-bottom: 7px;
-				font-weight: 600;
-			}
-
-			input[type="text"],
-			input[type="number"],
-			input[type="file"] {
-				width: 100%;
-				padding: 12px;
-				border: 1px solid #cbd5e1;
-				border-radius: 10px;
-				background: white;
-			}
-
-			button {
-				width: 100%;
-				margin-top: 24px;
-				padding: 14px;
-				border: 0;
-				border-radius: 10px;
-				background: #2563eb;
-				color: white;
-				font-size: 16px;
-				font-weight: 700;
-				cursor: pointer;
-			}
-
-			button:hover {
-				background: #1d4ed8;
-			}
-
-			button:disabled {
-				background: #94a3b8;
-				cursor: wait;
-			}
-
-			.result {
-				display: none;
-			}
-
-			.decision {
-				font-size: 32px;
-				font-weight: 800;
-				margin: 10px 0;
-			}
-
-			.eligible {
-				color: #15803d;
-			}
-
-			.review {
-				color: #ca8a04;
-			}
-
-			.ineligible {
-				color: #dc2626;
-			}
-
-			.confidence {
-				font-size: 18px;
-				margin-bottom: 18px;
-			}
-
-			.reason {
-				background: #f1f5f9;
-				padding: 15px;
-				border-radius: 10px;
-				line-height: 1.5;
-			}
-
-			.identity {
-				margin-top: 20px;
-			}
-
-			.identity-row {
-				display: flex;
-				justify-content: space-between;
-				gap: 20px;
-				padding: 11px 0;
-				border-bottom: 1px solid #e2e8f0;
-			}
-
-			.identity-row span:first-child {
-				font-weight: 600;
-				color: #475569;
-			}
-
-			.identity-row span:last-child {
-				text-align: right;
-				word-break: break-word;
-			}
-
-			.checks {
-				margin-top: 20px;
-			}
-
-			.check {
-				display: flex;
-				justify-content: space-between;
-				gap: 20px;
-				padding: 10px 0;
-				border-bottom: 1px solid #e2e8f0;
-			}
-
-			.check span:last-child {
-				text-align: right;
-			}
-
-			.status-pass {
-				color: #15803d;
-				font-weight: 700;
-			}
-
-			.status-review {
-				color: #ca8a04;
-				font-weight: 700;
-			}
-
-			.status-fail {
-				color: #dc2626;
-				font-weight: 700;
-			}
-
-			.loading {
-				display: none;
-				text-align: center;
-				color: #64748b;
-				margin-top: 15px;
-			}
-
-			.footer {
-				text-align: center;
-				color: #64748b;
-				margin: 35px 0;
-				font-size: 13px;
-			}
-
-			@media (max-width: 750px) {
-				.grid {
-					grid-template-columns: 1fr;
-				}
-
-				.hero h1 {
-					font-size: 32px;
-				}
-			}
-		</style>
-	</head>
-
-	<body>
-		<nav class="navbar">
-			<div class="logo">VerifyID AI</div>
-			<div class="badge">AI Identity & Eligibility Verification</div>
-		</nav>
-
-		<main class="container">
-			<section class="hero">
-				<h1>Identity Verification</h1>
-				<p>
-					Automated document analysis, eligibility checking, duplicate
-					detection and face verification.
-				</p>
-			</section>
-
-			<div class="grid">
-				<!-- INPUT -->
-				<section class="card">
-					<h2>Verify Registration</h2>
-
-					<p>
-						Upload an identity document and optionally provide a
-						selfie for face matching.
-					</p>
-
-					<form id="verificationForm">
-						<label>Registration Name</label>
-
-						<input
-							type="text"
-							id="registrationName"
-							placeholder="e.g. Rahul Sharma"
-							required
-						/>
-
-						<label>Identity Document</label>
-
-						<input
-							type="file"
-							id="document"
-							accept="image/png,image/jpeg,image/webp"
-							required
-						/>
-
-						<label
-							>Selfie
-							<span style="font-weight: 400; color: #64748b"
-								>(optional)</span
-							></label
-						>
-
-						<input
-							type="file"
-							id="selfie"
-							accept="image/png,image/jpeg,image/webp"
-						/>
-
-						<label>Minimum Age</label>
-
-						<input
-							type="number"
-							id="minAge"
-							value="18"
-							min="0"
-							max="150"
-						/>
-
-						<label>Maximum Age</label>
-
-						<input
-							type="number"
-							id="maxAge"
-							value="100"
-							min="0"
-							max="150"
-						/>
-
-						<button type="submit" id="verifyButton">
-							Verify Identity
-						</button>
-					</form>
-
-					<div class="loading" id="loading">
-						Processing document and verification signals...
-					</div>
-				</section>
-
-				<!-- RESULT -->
-				<section class="card result" id="resultCard">
-					<h2>Verification Result</h2>
-
-					<div id="decision" class="decision"></div>
-
-					<div id="confidence" class="confidence"></div>
-
-					<div id="reason" class="reason"></div>
-
-					<div class="identity">
-						<h3>Extracted Identity</h3>
-
-						<div class="identity-row">
-							<span>Name</span>
-							<span id="name">—</span>
-						</div>
-
-						<div class="identity-row">
-							<span>Date of Birth</span>
-							<span id="dob">—</span>
-						</div>
-
-						<div class="identity-row">
-							<span>ID Number</span>
-							<span id="idNumber">—</span>
-						</div>
-
-						<div class="identity-row">
-							<span>ID Type</span>
-							<span id="idType">—</span>
-						</div>
-
-						<div class="identity-row">
-							<span>Institution</span>
-							<span id="institution">—</span>
-						</div>
-					</div>
-
-					<div class="checks">
-						<h3>Verification Checks</h3>
-
-						<div class="check">
-							<span>OCR</span>
-							<span id="ocrStatus"></span>
-						</div>
-
-						<div class="check">
-							<span>Image Quality</span>
-							<span id="qualityStatus"></span>
-						</div>
-
-						<div class="check">
-							<span>Tamper Risk</span>
-							<span id="tamperStatus"></span>
-						</div>
-
-						<div class="check">
-							<span>Duplicate</span>
-							<span id="duplicateStatus"></span>
-						</div>
-
-						<div class="check">
-							<span>Identity Reuse</span>
-							<span id="identityDuplicateStatus"></span>
-						</div>
-
-						<div class="check">
-							<span>Eligibility</span>
-							<span id="eligibilityStatus"></span>
-						</div>
-
-						<div class="check">
-							<span>Name Match</span>
-							<span id="nameMatch"></span>
-						</div>
-
-						<div class="check">
-							<span>Face Match</span>
-							<span id="faceMatch"></span>
-						</div>
-					</div>
-				</section>
-			</div>
-
-			<section class="card" id="historyCard">
-				<h2>Verification History</h2>
-
-				<p>Recent verification decisions from this demo session.</p>
-
-				<div id="historyList">
-					<p style="color: #64748b">No verification attempts yet.</p>
-				</div>
-			</section>
-
-			<div class="footer">
-				VerifyID AI • Identity & Eligibility Verification Prototype
-			</div>
-		</main>
-
-		<script>
-			const form = document.getElementById("verificationForm");
-			const button = document.getElementById("verifyButton");
-			const loading = document.getElementById("loading");
-			const resultCard = document.getElementById("resultCard");
-
-			form.addEventListener("submit", async (event) => {
-				event.preventDefault();
-
-				const file = document.getElementById("document").files[0];
-
-				const selfie = document.getElementById("selfie").files[0];
-
-				const registrationName =
-					document.getElementById("registrationName").value;
-
-				const minAge = document.getElementById("minAge").value;
-
-				const maxAge = document.getElementById("maxAge").value;
-
-				if (!file) {
-					alert("Please select a document.");
-					return;
-				}
-
-				const formData = new FormData();
-
-				formData.append("file", file);
-				formData.append("registration_name", registrationName);
-				formData.append("min_age", minAge);
-				formData.append("max_age", maxAge);
-
-				if (selfie) {
-					formData.append("selfie", selfie);
-				}
-
-				button.disabled = true;
-				button.textContent = "Verifying...";
-				loading.style.display = "block";
-
-				try {
-					const response = await fetch("/api/verify", {
-						method: "POST",
-						body: formData,
-					});
-
-					const data = await response.json();
-
-					if (!response.ok || !data.success) {
-						throw new Error(
-							data.error || data.detail || "Verification failed.",
-						);
-					}
-
-					showResult(data.verification);
-				} catch (error) {
-					alert(error.message);
-				} finally {
-					button.disabled = false;
-					button.textContent = "Verify Identity";
-					loading.style.display = "none";
-				}
-			});
-
-			function showResult(result) {
-				resultCard.style.display = "block";
-
-				const decision = document.getElementById("decision");
-
-				decision.textContent = result.decision;
-
-				decision.className =
-					"decision " + result.decision.toLowerCase();
-
-				document.getElementById("confidence").textContent =
-					`Confidence: ${Math.round(result.confidence * 100)}%`;
-
-				document.getElementById("reason").textContent = result.reason;
-
-				const identity = result.identity || {};
-
-				document.getElementById("name").textContent =
-					identity.name || "Not detected";
-
-				document.getElementById("dob").textContent =
-					identity.date_of_birth || "Not detected";
-
-				document.getElementById("idNumber").textContent =
-					identity.id_number || "Not detected";
-
-				document.getElementById("idType").textContent =
-					identity.id_type || "Not detected";
-
-				document.getElementById("institution").textContent =
-					identity.institution || "Not detected";
-
-				const checks = result.checks || {};
-
-				setStatus("ocrStatus", checks.ocr);
-
-				setStatus("qualityStatus", checks.quality?.status);
-
-				setStatus(
-					"tamperStatus",
-					checks.tamper_risk?.risk || checks.tamper_risk?.status,
-				);
-
-				setStatus("duplicateStatus", checks.duplicate?.status);
-
-				setStatus(
-					"identityDuplicateStatus",
-					checks.identity_duplicate?.status,
-				);
-
-				setStatus("eligibilityStatus", checks.eligibility?.status);
-
-				let nameMatchValue = checks.name_match;
-
-				if (nameMatchValue === undefined || nameMatchValue === null) {
-					const registrationName = document
-						.getElementById("registrationName")
-						.value.trim();
-
-					const extractedName = identity.name || "";
-
-					nameMatchValue =
-						registrationName.toLowerCase() ===
-						extractedName.trim().toLowerCase();
-				}
-
-				if (
-					nameMatchValue === true ||
-					nameMatchValue === "true" ||
-					nameMatchValue === "matched"
-				) {
-					setStatus("nameMatch", "matched");
-				} else if (
-					nameMatchValue === false ||
-					nameMatchValue === "false" ||
-					nameMatchValue === "mismatch"
-				) {
-					setStatus("nameMatch", "mismatch");
-				} else {
-					setStatus("nameMatch", "not checked");
-				}
-
-				const faceMatch = checks.face_match || {};
-
-				if (faceMatch.status === "passed") {
-					setStatus("faceMatch", "passed");
-				} else if (faceMatch.status === "review") {
-					setStatus("faceMatch", "review");
-				} else if (faceMatch.status === "not_provided") {
-					setStatus("faceMatch", "not provided");
-				} else {
-					setStatus("faceMatch", "not checked");
-				}
-
-				addToHistory(result);
-			}
-
-			function setStatus(elementId, value) {
-				const element = document.getElementById(elementId);
-
-				if (!value) {
-					element.textContent = "—";
-					return;
-				}
-
-				element.textContent = String(value).replaceAll("_", " ");
-
-				const normalized = String(value).toLowerCase();
-
-				element.className = "";
-
-				if (
-					normalized.includes("pass") ||
-					normalized.includes("matched") ||
-					normalized.includes("not_detected") ||
-					normalized === "low"
-				) {
-					element.classList.add("status-pass");
-				} else if (
-					normalized.includes("review") ||
-					normalized.includes("medium") ||
-					normalized.includes("detected")
-				) {
-					element.classList.add("status-review");
-				} else {
-					element.classList.add("status-fail");
-				}
-			}
-
-			let verificationHistory = [];
-
-			function addToHistory(result) {
-				verificationHistory.unshift({
-					decision: result.decision,
-					confidence: result.confidence,
-					name: result.identity?.name || "Unknown",
-					id: result.identity?.id_number || "Unknown",
-					time: new Date().toLocaleTimeString(),
-				});
-
-				if (verificationHistory.length > 5) {
-					verificationHistory.pop();
-				}
-
-				renderHistory();
-			}
-
-			function renderHistory() {
-				const historyList = document.getElementById("historyList");
-
-				if (verificationHistory.length === 0) {
-					historyList.innerHTML = `<p style="color:#64748b;">
-                        No verification attempts yet.
-                    </p>`;
-
-					return;
-				}
-
-				historyList.innerHTML = verificationHistory
-					.map((item) => {
-						let statusClass =
-							item.decision === "ELIGIBLE"
-								? "status-pass"
-								: item.decision === "REVIEW"
-									? "status-review"
-									: "status-fail";
-
-						return `
-                            <div style="
-                                padding:14px 0;
-                                border-bottom:1px solid #e2e8f0;
-                            ">
-
-                                <div style="
-                                    display:flex;
-                                    justify-content:space-between;
-                                    align-items:center;
-                                ">
-
-                                    <strong>
-                                        ${escapeHtml(item.name)}
-                                    </strong>
-
-                                    <span class="${statusClass}">
-                                        ${item.decision}
-                                    </span>
-
-                                </div>
-
-                                <div style="
-                                    color:#64748b;
-                                    margin-top:5px;
-                                    font-size:13px;
-                                ">
-                                    ID: ${escapeHtml(item.id)}
-                                    · Confidence:
-                                    ${Math.round(item.confidence * 100)}%
-                                    · ${item.time}
-                                </div>
-
-                            </div>
-                        `;
-					})
-					.join("");
-			}
-
-			function escapeHtml(value) {
-				return String(value)
-					.replaceAll("&", "&amp;")
-					.replaceAll("<", "&lt;")
-					.replaceAll(">", "&gt;")
-					.replaceAll('"', "&quot;")
-					.replaceAll("'", "&#039;");
-			}
-		</script>
-	</body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VerifyID AI — Production Identity & Eligibility Verification Platform</title>
+  <meta name="description" content="Production-grade AI-powered identity and eligibility verification platform featuring OCR extraction, facial biometrics, duplicate detection, and operator review workflows.">
+  
+  <!-- Modern Google Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    /* -------------------------------------------------------------
+       DESIGN SYSTEM & CSS VARIABLES
+       ------------------------------------------------------------- */
+    :root {
+      --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      /* Primary & Brand */
+      --brand-50: #eff6ff;
+      --brand-100: #dbeafe;
+      --brand-500: #3b82f6;
+      --brand-600: #2563eb;
+      --brand-700: #1d4ed8;
+      --brand-gradient: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #4f46e5 100%);
+
+      /* Neutrals & Dark Surfaces */
+      --slate-50: #f8fafc;
+      --slate-100: #f1f5f9;
+      --slate-200: #e2e8f0;
+      --slate-300: #cbd5e1;
+      --slate-400: #94a3b8;
+      --slate-500: #64748b;
+      --slate-600: #475569;
+      --slate-700: #334155;
+      --slate-800: #1e293b;
+      --slate-900: #0f172a;
+      --slate-950: #020617;
+
+      /* Status Palettes */
+      --emerald-50: #ecfdf5;
+      --emerald-500: #10b981;
+      --emerald-600: #059669;
+      --emerald-700: #047857;
+      
+      --amber-50: #fffbeb;
+      --amber-500: #f59e0b;
+      --amber-600: #d97706;
+      --amber-700: #b45309;
+
+      --rose-50: #fff1f2;
+      --rose-500: #f43f5e;
+      --rose-600: #e11d48;
+      --rose-700: #be123c;
+
+      /* Shadows & Elevation */
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+      --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+
+      /* Border Radius Scale */
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --radius-full: 9999px;
+
+      /* Transitions */
+      --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: #f8fafc;
+      color: var(--slate-900);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* -------------------------------------------------------------
+       NAVBAR & HEADER
+       ------------------------------------------------------------- */
+    .navbar {
+      background: var(--slate-900);
+      color: white;
+      padding: 0.875rem 1.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      box-shadow: 0 4px 20px rgba(15, 23, 42, 0.15);
+    }
+
+    .nav-container {
+      max-width: 1360px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: white;
+    }
+
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      background: var(--brand-gradient);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.25rem;
+      box-shadow: 0 0 15px rgba(37, 99, 235, 0.5);
+    }
+
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-badge {
+      font-size: 0.7rem;
+      background: var(--slate-800);
+      color: var(--brand-500);
+      padding: 0.25rem 0.5rem;
+      border-radius: var(--radius-full);
+      font-weight: 700;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 0.35rem;
+      background: var(--slate-950);
+      padding: 0.25rem;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--slate-800);
+    }
+
+    .nav-tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--slate-400);
+      padding: 0.5rem 0.85rem;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .nav-tab-btn:hover {
+      color: white;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .nav-tab-btn.active {
+      background: var(--brand-600);
+      color: white;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--slate-300);
+      background: var(--slate-800);
+      padding: 0.35rem 0.75rem;
+      border-radius: var(--radius-full);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--emerald-500);
+      box-shadow: 0 0 8px var(--emerald-500);
+    }
+
+    .auth-btn {
+      background: var(--slate-800);
+      color: white;
+      border: 1px solid var(--slate-700);
+      padding: 0.45rem 0.9rem;
+      border-radius: var(--radius-md);
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .auth-btn:hover {
+      background: var(--slate-700);
+    }
+
+    /* -------------------------------------------------------------
+       MAIN CONTAINER & LAYOUT
+       ------------------------------------------------------------- */
+    .main-wrapper {
+      max-width: 1360px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+      flex: 1;
+      width: 100%;
+    }
+
+    .tab-view {
+      display: none;
+      animation: fadeIn 0.3s var(--ease-smooth);
+    }
+
+    .tab-view.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* -------------------------------------------------------------
+       VERIFICATION PORTAL (TWO-COLUMN GRID)
+       ------------------------------------------------------------- */
+    .portal-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.25fr);
+      gap: 2rem;
+      align-items: start;
+    }
+
+    .card {
+      background: white;
+      border-radius: var(--radius-lg);
+      padding: 1.75rem;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--slate-200);
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+
+    .card-header {
+      margin-bottom: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: var(--slate-900);
+      letter-spacing: -0.01em;
+    }
+
+    .card-subtitle {
+      color: var(--slate-500);
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+
+    /* Form Styles */
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+
+    .form-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.875rem;
+      font-weight: 700;
+      color: var(--slate-700);
+      margin-bottom: 0.4rem;
+    }
+
+    .form-label-hint {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--slate-400);
+    }
+
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      font-family: inherit;
+      font-size: 0.95rem;
+      color: var(--slate-900);
+      background: white;
+      border: 1.5px solid var(--slate-200);
+      border-radius: var(--radius-md);
+      transition: all 0.2s ease;
+    }
+
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      outline: none;
+      border-color: var(--brand-600);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+
+    /* Upload Dropzones */
+    .dropzone {
+      border: 2px dashed var(--slate-300);
+      border-radius: var(--radius-md);
+      padding: 1.5rem 1rem;
+      text-align: center;
+      background: var(--slate-50);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--brand-600);
+      background: var(--brand-50);
+    }
+
+    .dropzone-icon {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+      color: var(--brand-600);
+    }
+
+    .dropzone-text {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--slate-700);
+    }
+
+    .dropzone-subtext {
+      font-size: 0.75rem;
+      color: var(--slate-400);
+      margin-top: 0.25rem;
+    }
+
+    .file-input-hidden {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .file-preview-card {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      background: white;
+      border: 1px solid var(--slate-200);
+      border-radius: var(--radius-md);
+      padding: 0.75rem 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .preview-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      overflow: hidden;
+    }
+
+    .preview-thumb {
+      width: 44px;
+      height: 44px;
+      border-radius: var(--radius-sm);
+      object-fit: cover;
+      background: var(--slate-100);
+    }
+
+    .preview-meta {
+      overflow: hidden;
+    }
+
+    .preview-filename {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--slate-800);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+    }
+
+    .preview-filesize {
+      font-size: 0.75rem;
+      color: var(--slate-400);
+    }
+
+    .btn-remove-file {
+      background: transparent;
+      border: none;
+      color: var(--rose-600);
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 0.35rem 0.6rem;
+      border-radius: var(--radius-sm);
+    }
+
+    .btn-remove-file:hover {
+      background: var(--rose-50);
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 0.95rem;
+      background: var(--brand-gradient);
+      color: white;
+      border: none;
+      border-radius: var(--radius-md);
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+
+    .btn-submit:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45);
+    }
+
+    .btn-submit:disabled {
+      background: var(--slate-400);
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* -------------------------------------------------------------
+       RESULTS & VERIFICATION SUMMARY
+       ------------------------------------------------------------- */
+    .decision-banner {
+      padding: 1.5rem;
+      border-radius: var(--radius-lg);
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .decision-banner.eligible {
+      background: var(--emerald-50);
+      border: 1.5px solid rgba(16, 185, 129, 0.3);
+      color: var(--emerald-700);
+    }
+
+    .decision-banner.review {
+      background: var(--amber-50);
+      border: 1.5px solid rgba(245, 158, 11, 0.3);
+      color: var(--amber-700);
+    }
+
+    .decision-banner.ineligible {
+      background: var(--rose-50);
+      border: 1.5px solid rgba(244, 63, 94, 0.3);
+      color: var(--rose-700);
+    }
+
+    .decision-main {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .decision-icon {
+      font-size: 2rem;
+    }
+
+    .decision-label {
+      font-size: 0.75rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .decision-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      line-height: 1.1;
+    }
+
+    /* Tri-Metric Gauges */
+    .metrics-bar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .metric-card {
+      background: var(--slate-50);
+      border: 1px solid var(--slate-200);
+      border-radius: var(--radius-md);
+      padding: 0.85rem;
+      text-align: center;
+    }
+
+    .metric-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--slate-500);
+      letter-spacing: 0.04em;
+    }
+
+    .metric-value {
+      font-size: 1.35rem;
+      font-weight: 800;
+      margin-top: 0.25rem;
+      color: var(--slate-900);
+      font-family: var(--font-mono);
+    }
+
+    .metric-sub {
+      font-size: 0.7rem;
+      color: var(--slate-400);
+      margin-top: 0.15rem;
+    }
+
+    /* Explanation Reason Card */
+    .reason-box {
+      background: var(--slate-50);
+      border-left: 4px solid var(--brand-600);
+      padding: 1rem 1.25rem;
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+      color: var(--slate-700);
+      line-height: 1.6;
+    }
+
+    /* Extracted Identity Card */
+    .identity-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1.5rem;
+      font-size: 0.875rem;
+    }
+
+    .identity-table tr {
+      border-bottom: 1px solid var(--slate-100);
+    }
+
+    .identity-table td {
+      padding: 0.65rem 0;
+    }
+
+    .identity-table td:first-child {
+      font-weight: 600;
+      color: var(--slate-500);
+      width: 38%;
+    }
+
+    .identity-table td:last-child {
+      font-weight: 700;
+      color: var(--slate-800);
+      text-align: right;
+    }
+
+    /* Granular Signals Accordion */
+    .signals-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .signal-item {
+      background: white;
+      border: 1px solid var(--slate-200);
+      border-radius: var(--radius-md);
+      padding: 0.85rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      transition: all 0.2s ease;
+    }
+
+    .signal-item:hover {
+      border-color: var(--slate-300);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .signal-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+
+    .signal-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .signal-name {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--slate-800);
+    }
+
+    .signal-reason {
+      font-size: 0.78rem;
+      color: var(--slate-500);
+      line-height: 1.4;
+    }
+
+    .badge-status {
+      font-size: 0.72rem;
+      font-weight: 800;
+      padding: 0.25rem 0.65rem;
+      border-radius: var(--radius-full);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+    }
+
+    .badge-passed { background: var(--emerald-50); color: var(--emerald-700); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-review { background: var(--amber-50); color: var(--amber-700); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-failed { background: var(--rose-50); color: var(--rose-700); border: 1px solid rgba(244, 63, 94, 0.3); }
+    .badge-skipped { background: var(--slate-100); color: var(--slate-600); border: 1px solid var(--slate-200); }
+
+    /* -------------------------------------------------------------
+       OPERATOR REVIEW QUEUE TAB
+       ------------------------------------------------------------- */
+    .queue-table-wrapper {
+      overflow-x: auto;
+      margin-top: 1rem;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      text-align: left;
+    }
+
+    .data-table th {
+      background: var(--slate-50);
+      color: var(--slate-600);
+      font-weight: 700;
+      padding: 0.85rem 1rem;
+      border-bottom: 1.5px solid var(--slate-200);
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+    }
+
+    .data-table td {
+      padding: 1rem;
+      border-bottom: 1px solid var(--slate-100);
+      color: var(--slate-800);
+    }
+
+    .data-table tr:hover {
+      background: var(--slate-50);
+    }
+
+    .btn-action {
+      background: var(--brand-50);
+      color: var(--brand-700);
+      border: 1px solid var(--brand-200);
+      padding: 0.4rem 0.75rem;
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-action:hover {
+      background: var(--brand-600);
+      color: white;
+    }
+
+    /* -------------------------------------------------------------
+       MODALS & DRAWERS
+       ------------------------------------------------------------- */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.65);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+
+    .modal-backdrop.active {
+      display: flex;
+    }
+
+    .modal-dialog {
+      background: white;
+      border-radius: var(--radius-lg);
+      width: min(650px, 96%);
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow-xl);
+      padding: 2rem;
+      position: relative;
+      animation: modalSlide 0.25s var(--ease-smooth);
+    }
+
+    @keyframes modalSlide {
+      from { transform: scale(0.96) translateY(8px); opacity: 0; }
+      to { transform: scale(1) translateY(0); opacity: 1; }
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 1.25rem;
+      right: 1.25rem;
+      background: transparent;
+      border: none;
+      font-size: 1.5rem;
+      color: var(--slate-400);
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    /* -------------------------------------------------------------
+       FOOTER
+       ------------------------------------------------------------- */
+    .footer {
+      background: white;
+      border-top: 1px solid var(--slate-200);
+      padding: 1.5rem 0;
+      text-align: center;
+      color: var(--slate-500);
+      font-size: 0.8rem;
+      margin-top: auto;
+    }
+
+    /* -------------------------------------------------------------
+       RESPONSIVE BREAKPOINTS (Verified for 320px to 1920px)
+       ------------------------------------------------------------- */
+    @media (max-width: 960px) {
+      .portal-grid {
+        grid-template-columns: 1fr;
+      }
+      .nav-container {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .nav-tabs {
+        width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .metrics-bar {
+        grid-template-columns: 1fr;
+      }
+      .card {
+        padding: 1.25rem;
+      }
+      .brand-title {
+        font-size: 1.1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <div class="nav-container">
+      <a href="#" class="brand-group" id="brandHomeLink">
+        <div class="brand-icon">V</div>
+        <div>
+          <div class="brand-title">VerifyID <span style="color:var(--brand-500);">AI</span></div>
+        </div>
+        <div class="brand-badge">Production Platform</div>
+      </a>
+
+      <div class="nav-tabs">
+        <button class="nav-tab-btn active" data-tab="portal" id="tabBtnPortal">
+          <span>🛡️</span> Verify
+        </button>
+        <button class="nav-tab-btn" data-tab="queue" id="tabBtnQueue">
+          <span>📋</span> Review Queue <span id="queueBadge" style="background:var(--amber-500); color:black; font-size:0.7rem; padding:0 5px; border-radius:10px; display:none;">0</span>
+        </button>
+        <button class="nav-tab-btn" data-tab="history" id="tabBtnHistory">
+          <span>📊</span> History
+        </button>
+        <button class="nav-tab-btn" data-tab="policy" id="tabBtnPolicy">
+          <span>⚙️</span> Event Policy
+        </button>
+        <button class="nav-tab-btn" data-tab="system" id="tabBtnSystem">
+          <span>🟢</span> System Status
+        </button>
+      </div>
+
+      <div class="nav-actions">
+        <div class="status-indicator">
+          <span class="status-dot" id="systemStatusDot"></span>
+          <span id="systemStatusText">Operational</span>
+        </div>
+        <button class="auth-btn" id="authBtn">Operator Sign In</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- MAIN WORKSPACE -->
+  <main class="main-wrapper">
+
+    <!-- 1. VERIFICATION PORTAL TAB -->
+    <div class="tab-view active" id="tabPortal">
+      <div class="portal-grid">
+        
+        <!-- SUBMISSION FORM -->
+        <section class="card">
+          <div class="card-header">
+            <h1 class="card-title">Registration Verification</h1>
+            <p class="card-subtitle">AI-powered OCR extraction, multi-signal tamper analysis, age eligibility, and biometric facial matching.</p>
+          </div>
+
+          <form id="verifyForm">
+            <div class="form-group">
+              <label class="form-label" for="registrationName">
+                Full Registration Name <span style="color:var(--rose-600)">*</span>
+                <span class="form-label-hint">As entered on ticket/registration</span>
+              </label>
+              <input type="text" id="registrationName" class="form-input" placeholder="e.g. Rahul Sharma" required autocomplete="name">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="eventSelector">
+                Target Event
+                <span class="form-label-hint">Verification policy source</span>
+              </label>
+              <select id="eventSelector" class="form-select">
+                <option value="HACK2026">AI Build Challenge 2026 (Min Age 18+)</option>
+              </select>
+            </div>
+
+            <!-- DOCUMENT UPLOAD -->
+            <div class="form-group">
+              <label class="form-label">
+                Identity Document Image <span style="color:var(--rose-600)">*</span>
+                <span class="form-label-hint">Govt ID, Passport, PAN, Aadhaar, Student ID</span>
+              </label>
+              
+              <div class="dropzone" id="docDropzone">
+                <div class="dropzone-icon">📄</div>
+                <div class="dropzone-text">Click or drag & drop ID document</div>
+                <div class="dropzone-subtext">JPEG, PNG, WebP up to 10MB</div>
+                <input type="file" id="docFile" class="file-input-hidden" accept="image/jpeg,image/png,image/webp">
+              </div>
+
+              <div class="file-preview-card" id="docPreview">
+                <div class="preview-info">
+                  <img id="docPreviewThumb" class="preview-thumb" alt="Document thumbnail">
+                  <div class="preview-meta">
+                    <div id="docFilename" class="preview-filename">—</div>
+                    <div id="docFilesize" class="preview-filesize">—</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-remove-file" id="btnRemoveDoc">Remove</button>
+              </div>
+            </div>
+
+            <!-- SELFIE UPLOAD -->
+            <div class="form-group">
+              <label class="form-label">
+                Live Selfie Photo
+                <span class="form-label-hint">Optional biometric verification</span>
+              </label>
+              
+              <div class="dropzone" id="selfieDropzone">
+                <div class="dropzone-icon">🤳</div>
+                <div class="dropzone-text">Click or drag & drop selfie photo</div>
+                <div class="dropzone-subtext">JPEG, PNG up to 10MB</div>
+                <input type="file" id="selfieFile" class="file-input-hidden" accept="image/jpeg,image/png,image/webp">
+              </div>
+
+              <div class="file-preview-card" id="selfiePreview">
+                <div class="preview-info">
+                  <img id="selfiePreviewThumb" class="preview-thumb" alt="Selfie thumbnail">
+                  <div class="preview-meta">
+                    <div id="selfieFilename" class="preview-filename">—</div>
+                    <div id="selfieFilesize" class="preview-filesize">—</div>
+                  </div>
+                </div>
+                <button type="button" class="btn-remove-file" id="btnRemoveSelfie">Remove</button>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-submit" id="btnSubmitVerify">
+              <span>🚀</span> Execute Automated Verification
+            </button>
+          </form>
+        </section>
+
+        <!-- VERIFICATION RESULTS -->
+        <section class="card" id="resultsCard" style="display:none;">
+          <div class="card-header">
+            <h2 class="card-title">Verification Decision</h2>
+            <p class="card-subtitle" id="requestMeta">—</p>
+          </div>
+
+          <!-- Banner -->
+          <div id="decisionBanner" class="decision-banner eligible">
+            <div class="decision-main">
+              <div class="decision-icon" id="decisionIcon">✅</div>
+              <div>
+                <div class="decision-label">Platform Decision</div>
+                <div class="decision-value" id="decisionValue">ELIGIBLE</div>
+              </div>
+            </div>
+            <div id="caseStatusPill"></div>
+          </div>
+
+          <!-- Tri-Metric Gauges -->
+          <div class="metrics-bar">
+            <div class="metric-card">
+              <div class="metric-title">Confidence</div>
+              <div class="metric-value" id="valConfidence">—</div>
+              <div class="metric-sub">Calibrated Weight</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Evidence</div>
+              <div class="metric-value" id="valEvidence">—</div>
+              <div class="metric-sub">Corroboration</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-title">Anomaly Risk</div>
+              <div class="metric-value" id="valRisk">—</div>
+              <div class="metric-sub">Risk Indicators</div>
+            </div>
+          </div>
+
+          <!-- Structured Reason Box -->
+          <div class="reason-box" id="reasonBox">
+            —
+          </div>
+
+          <!-- Extracted Identity -->
+          <h3 style="font-size: 1rem; font-weight: 800; margin-bottom: 0.75rem;">Extracted Document Identity</h3>
+          <table class="identity-table">
+            <tbody>
+              <tr>
+                <td>Extracted Name</td>
+                <td id="resName">—</td>
+              </tr>
+              <tr>
+                <td>Date of Birth</td>
+                <td id="resDob">—</td>
+              </tr>
+              <tr>
+                <td>Calculated Age</td>
+                <td id="resAge">—</td>
+              </tr>
+              <tr>
+                <td>ID Number</td>
+                <td id="resIdNum" style="font-family:var(--font-mono); font-size:0.85rem;">—</td>
+              </tr>
+              <tr>
+                <td>Document Type</td>
+                <td id="resIdType">—</td>
+              </tr>
+              <tr>
+                <td>Institution</td>
+                <td id="resInstitution">—</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- Granular Signals -->
+          <h3 style="font-size: 1rem; font-weight: 800; margin-bottom: 0.75rem;">Multi-Signal Evidence Log</h3>
+          <div class="signals-list" id="signalsList">
+            <!-- Dynamic Signals -->
+          </div>
+        </section>
+
+        <!-- Placeholder when no result is active -->
+        <section class="card" id="resultsEmptyState">
+          <div style="text-align:center; padding: 4rem 1rem; color: var(--slate-400);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🛡️</div>
+            <h2 style="color:var(--slate-700); font-size:1.15rem; font-weight:700;">Awaiting Submission</h2>
+            <p style="font-size:0.85rem; max-width:320px; margin: 0.5rem auto;">Submit registration details and an identity document to execute the multi-signal AI verification engine.</p>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- 2. OPERATOR REVIEW QUEUE TAB -->
+    <div class="tab-view" id="tabQueue">
+      <section class="card">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+          <div>
+            <h2 class="card-title">Operator Review Queue</h2>
+            <p class="card-subtitle">Submissions flagged for manual inspection due to name discrepancies, blur, or duplicates.</p>
+          </div>
+          <button class="btn-action" id="btnRefreshQueue">🔄 Refresh Queue</button>
+        </div>
+
+        <div id="queueAuthWarning" style="display:none; background:var(--amber-50); border:1px solid var(--amber-500); padding:1rem; border-radius:var(--radius-md); color:var(--amber-700); font-size:0.9rem; margin-bottom:1rem;">
+          ⚠️ Operator sign in required to view and resolve review cases. Please sign in using the top right button.
+        </div>
+
+        <div class="queue-table-wrapper">
+          <table class="data-table" id="queueTable">
+            <thead>
+              <tr>
+                <th>Registration</th>
+                <th>Event</th>
+                <th>Priority</th>
+                <th>Original Decision</th>
+                <th>Flagged Reason</th>
+                <th>Created</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="queueTableBody">
+              <tr>
+                <td colspan="7" style="text-align:center; color:var(--slate-400); padding:2rem;">No pending review cases found.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- 3. VERIFICATION HISTORY TAB -->
+    <div class="tab-view" id="tabHistory">
+      <section class="card">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+          <div>
+            <h2 class="card-title">Verification Records & Audit Trail</h2>
+            <p class="card-subtitle">Historical log of all automated decisions persisted in the relational database.</p>
+          </div>
+          <button class="btn-action" id="btnRefreshHistory">🔄 Refresh</button>
+        </div>
+
+        <div class="queue-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Applicant</th>
+                <th>Event</th>
+                <th>Decision</th>
+                <th>Confidence</th>
+                <th>Summary Reason</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <tr>
+                <td colspan="6" style="text-align:center; color:var(--slate-400); padding:2rem;">No verification records found.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- 4. EVENT POLICIES TAB -->
+    <div class="tab-view" id="tabPolicy">
+      <section class="card" style="max-width: 750px; margin: 0 auto;">
+        <div class="card-header">
+          <h2 class="card-title">Event Verification Policies</h2>
+          <p class="card-subtitle">Configure strictness, age limits, and biometric rules per hackathon/event.</p>
+        </div>
+
+        <form id="policyForm">
+          <div class="form-group">
+            <label class="form-label" for="policyMinAge">Minimum Permitted Age</label>
+            <input type="number" id="policyMinAge" class="form-input" min="0" max="120" value="18">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="policyMaxAge">Maximum Permitted Age</label>
+            <input type="number" id="policyMaxAge" class="form-input" min="0" max="120" value="100">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="policyRequireSelfie">
+              Require Mandatory Biometric Selfie
+            </label>
+            <span class="form-label-hint">When enabled, missing selfies trigger REVIEW automatically.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="policyStrictName">
+              Enforce Strict Name Matching (>= 90% threshold)
+            </label>
+            <span class="form-label-hint">Disables fuzzy token order tolerance; requires near-exact spelling.</span>
+          </div>
+
+          <button type="submit" class="btn-submit" id="btnSavePolicy" style="width: auto; padding: 0.75rem 1.5rem;">
+            Save Event Policy
+          </button>
+        </form>
+      </section>
+    </div>
+
+    <!-- 5. SYSTEM STATUS & AUDIT TAB -->
+    <div class="tab-view" id="tabSystem">
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;">
+        <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Platform Diagnostics</h2>
+            <p class="card-subtitle">Service health, persistent storage, and connected providers.</p>
+          </div>
+          <div id="systemDiagDetails" style="font-size:0.875rem; line-height:1.8;">
+            Loading platform diagnostic status...
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2 class="card-title">Recent Security & Audit Logs</h2>
+            <p class="card-subtitle">Immutable audit trail of operator and verification actions.</p>
+          </div>
+          <div id="auditLogList" style="font-size:0.82rem; max-height:400px; overflow-y:auto; font-family:var(--font-mono);">
+            Loading audit logs...
+          </div>
+        </section>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- OPERATOR SIGN IN MODAL -->
+  <div class="modal-backdrop" id="authModal">
+    <div class="modal-dialog">
+      <button class="modal-close" id="btnCloseAuthModal">&times;</button>
+      <div class="card-header">
+        <h2 class="card-title">Operator Sign In</h2>
+        <p class="card-subtitle">Sign in to resolve review cases, configure event policies, and view audit trails.</p>
+      </div>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" id="loginEmail" class="form-input" value="reviewer@verifyid.local" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="loginPassword" class="form-input" value="Reviewer@12345" required>
+        </div>
+
+        <div style="background:var(--slate-100); padding:0.75rem; border-radius:var(--radius-sm); font-size:0.78rem; color:var(--slate-600); margin-bottom:1.25rem;">
+          <strong>Demo Operator Credentials:</strong><br>
+          Reviewer: <code>reviewer@verifyid.local</code> / <code>Reviewer@12345</code><br>
+          Admin: <code>admin@verifyid.local</code> / <code>Admin@12345</code>
+        </div>
+
+        <button type="submit" class="btn-submit" id="btnLoginSubmit">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- REVIEW CASE DETAIL MODAL -->
+  <div class="modal-backdrop" id="caseModal">
+    <div class="modal-dialog" style="width: min(850px, 96%);">
+      <button class="modal-close" id="btnCloseCaseModal">&times;</button>
+      <div class="card-header">
+        <h2 class="card-title">Manual Review Case Resolution</h2>
+        <p class="card-subtitle" id="modalCaseSubtitle">—</p>
+      </div>
+
+      <div id="modalCaseDetails">
+        <!-- Injected Case Details -->
+      </div>
+
+      <div class="form-group" style="margin-top: 1.5rem;">
+        <label class="form-label">Reviewer Notes & Justification <span style="color:var(--rose-600)">*</span></label>
+        <textarea id="modalReviewNotes" class="form-textarea" rows="3" placeholder="Enter reason for human override or approval..."></textarea>
+      </div>
+
+      <div style="display:flex; gap:1rem; margin-top:1.5rem; justify-content:flex-end; flex-wrap:wrap;">
+        <button type="button" class="btn-action" style="background:var(--rose-50); color:var(--rose-700); border-color:var(--rose-200); padding:0.6rem 1.25rem;" id="btnRejectCase">
+          ❌ Reject Registration
+        </button>
+        <button type="button" class="btn-action" style="background:var(--emerald-50); color:var(--emerald-700); border-color:var(--emerald-200); padding:0.6rem 1.25rem;" id="btnApproveCase">
+          ✅ Approve Registration
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    VerifyID AI Platform • Production Identity & Eligibility Verification Suite
+  </footer>
+
+  <!-- SCRIPT LOGIC -->
+  <script>
+    // State management
+    const state = {
+      docFile: null,
+      selfieFile: null,
+      activeEvent: null,
+      authToken: localStorage.getItem('verifyid_token') || null,
+      currentUser: null,
+      activeReviewCase: null,
+    };
+
+    // Tab Navigation
+    document.querySelectorAll('.nav-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav-tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+        btn.classList.add('active');
+        const targetId = 'tab' + btn.dataset.tab.charAt(0).toUpperCase() + btn.dataset.tab.slice(1);
+        const targetView = document.getElementById(targetId);
+        if (targetView) targetView.classList.add('active');
+
+        // Refresh tab-specific data
+        if (btn.dataset.tab === 'queue') loadReviewQueue();
+        if (btn.dataset.tab === 'history') loadHistory();
+        if (btn.dataset.tab === 'policy') loadEventPolicy();
+        if (btn.dataset.tab === 'system') loadSystemDiagnostics();
+      });
+    });
+
+    // File Dropzones & Previews
+    function setupDropzone(dropzoneId, inputId, previewId, thumbId, nameId, sizeId, removeBtnId, stateKey) {
+      const dropzone = document.getElementById(dropzoneId);
+      const input = document.getElementById(inputId);
+      const preview = document.getElementById(previewId);
+      const thumb = document.getElementById(thumbId);
+      const nameEl = document.getElementById(nameId);
+      const sizeEl = document.getElementById(sizeId);
+      const removeBtn = document.getElementById(removeBtnId);
+
+      ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          dropzone.classList.add('dragover');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          dropzone.classList.remove('dragover');
+        });
+      });
+
+      dropzone.addEventListener('drop', (e) => {
+        if (e.dataTransfer.files.length > 0) {
+          handleFile(e.dataTransfer.files[0]);
+        }
+      });
+
+      input.addEventListener('change', () => {
+        if (input.files.length > 0) {
+          handleFile(input.files[0]);
+        }
+      });
+
+      function handleFile(file) {
+        if (file.size > 12 * 1024 * 1024) {
+          alert('File is too large. Maximum size is 12MB.');
+          return;
+        }
+        state[stateKey] = file;
+        nameEl.textContent = file.name;
+        sizeEl.textContent = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+
+        // Read thumbnail preview
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          thumb.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+
+        preview.style.display = 'flex';
+        dropzone.style.display = 'none';
+      }
+
+      removeBtn.addEventListener('click', () => {
+        state[stateKey] = null;
+        input.value = '';
+        preview.style.display = 'none';
+        dropzone.style.display = 'block';
+      });
+    }
+
+    setupDropzone('docDropzone', 'docFile', 'docPreview', 'docPreviewThumb', 'docFilename', 'docFilesize', 'btnRemoveDoc', 'docFile');
+    setupDropzone('selfieDropzone', 'selfieFile', 'selfiePreview', 'selfiePreviewThumb', 'selfieFilename', 'selfieFilesize', 'btnRemoveSelfie', 'selfieFile');
+
+    // Verification Form Submission
+    document.getElementById('verifyForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!state.docFile) {
+        alert('Please select or drop an identity document image.');
+        return;
+      }
+
+      const btn = document.getElementById('btnSubmitVerify');
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳</span> Processing AI Verification Pipeline...';
+
+      const formData = new FormData();
+      formData.append('registration_name', document.getElementById('registrationName').value.trim());
+      formData.append('event_code', document.getElementById('eventSelector').value);
+      formData.append('file', state.docFile);
+
+      if (state.selfieFile) {
+        formData.append('selfie', state.selfieFile);
+      }
+
+      try {
+        const response = await fetch('/api/verify', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Verification processing failed.');
+        }
+
+        renderVerificationResult(data);
+      } catch (err) {
+        alert('Verification Error: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>🚀</span> Execute Automated Verification';
+      }
+    });
+
+    function renderVerificationResult(data) {
+      document.getElementById('resultsEmptyState').style.display = 'none';
+      const resultsCard = document.getElementById('resultsCard');
+      resultsCard.style.display = 'block';
+
+      // Decision Banner
+      const banner = document.getElementById('decisionBanner');
+      const valEl = document.getElementById('decisionValue');
+      const iconEl = document.getElementById('decisionIcon');
+      banner.className = 'decision-banner ' + data.decision.toLowerCase();
+      valEl.textContent = data.decision;
+
+      if (data.decision === 'ELIGIBLE') {
+        iconEl.textContent = '✅';
+      } else if (data.decision === 'REVIEW') {
+        iconEl.textContent = '⚠️';
+      } else {
+        iconEl.textContent = '❌';
+      }
+
+      // Metadata
+      document.getElementById('requestMeta').textContent = `Request ID: ${data.requestId} • Created: ${new Date().toLocaleTimeString()}`;
+
+      // Gauges
+      document.getElementById('valConfidence').textContent = `${Math.round(data.confidence_score * 100)}%`;
+      document.getElementById('valEvidence').textContent = `${Math.round(data.evidence_score * 100)}%`;
+      document.getElementById('valRisk').textContent = `${Math.round(data.risk_score * 100)}%`;
+
+      // Reason Box
+      document.getElementById('reasonBox').textContent = data.summary_reason;
+
+      // Identity table
+      const id = data.identity || {};
+      document.getElementById('resName').textContent = id.name || 'Not detected';
+      document.getElementById('resDob').textContent = id.date_of_birth || 'Not detected';
+      document.getElementById('resAge').textContent = id.calculated_age !== null && id.calculated_age !== undefined ? `${id.calculated_age} years` : 'Unknown';
+      document.getElementById('resIdNum').textContent = id.id_number_masked || '—';
+      document.getElementById('resIdType').textContent = (id.id_type || 'UNKNOWN').replaceAll('_', ' ');
+      document.getElementById('resInstitution').textContent = id.institution || '—';
+
+      // Signals List
+      const signalsEl = document.getElementById('signalsList');
+      signalsEl.innerHTML = (data.signals || []).map(s => {
+        const badgeClass = 'badge-' + (s.status ? s.status.toLowerCase() : 'skipped');
+        return `
+          <div class="signal-item">
+            <div class="signal-info">
+              <div class="signal-header">
+                <span class="signal-name">${escapeHtml(s.signal_type.replaceAll('_', ' '))}</span>
+                ${s.score !== null && s.score !== undefined ? `<span style="font-size:0.75rem; color:var(--slate-400); font-family:var(--font-mono);">score: ${s.score}</span>` : ''}
+              </div>
+              <div class="signal-reason">${escapeHtml(s.reason)}</div>
+            </div>
+            <span class="badge-status ${badgeClass}">${s.status}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Review Queue Loader
+    async function loadReviewQueue() {
+      const tbody = document.getElementById('queueTableBody');
+      const warn = document.getElementById('queueAuthWarning');
+
+      if (!state.authToken) {
+        warn.style.display = 'block';
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--slate-400); padding:2rem;">Sign in required to view review cases.</td></tr>`;
+        return;
+      }
+      warn.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/review-cases', {
+          headers: { 'Authorization': `Bearer ${state.authToken}` }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load queue');
+
+        document.getElementById('queueBadge').style.display = data.count > 0 ? 'inline-block' : 'none';
+        document.getElementById('queueBadge').textContent = data.count;
+
+        if (data.cases.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--slate-400); padding:2rem;">🎉 Queue is empty! No open review cases.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = data.cases.map(c => `
+          <tr>
+            <td><strong>${escapeHtml(c.registration_name)}</strong></td>
+            <td>${escapeHtml(c.event_code)}</td>
+            <td><span class="badge-status ${c.priority === 'HIGH' ? 'badge-failed' : 'badge-review'}">${c.priority}</span></td>
+            <td><span class="badge-status badge-review">${c.original_decision}</span></td>
+            <td style="max-width:300px; font-size:0.8rem; color:var(--slate-600);">${escapeHtml(c.reviewer_notes || c.summary_reason || '—')}</td>
+            <td style="font-size:0.75rem; color:var(--slate-400);">${new Date(c.created_at).toLocaleString()}</td>
+            <td><button class="btn-action" onclick="openReviewModal('${c.id}')">Inspect & Resolve</button></td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--rose-600); padding:2rem;">${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    // Open Case Review Modal
+    window.openReviewModal = async function(caseId) {
+      try {
+        const res = await fetch(`/api/review-cases/${caseId}`, {
+          headers: { 'Authorization': `Bearer ${state.authToken}` }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        state.activeReviewCase = data.case;
+        document.getElementById('modalCaseSubtitle').textContent = `Applicant: ${data.case.registration_name} • Case ID: ${data.case.id}`;
+        
+        // Render modal body with side-by-side images if available
+        let imagesHtml = '';
+        if (data.case.documents && data.case.documents.length > 0) {
+          imagesHtml = `
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1rem 0;">
+              ${data.case.documents.map(d => `
+                <div style="border:1px solid var(--slate-200); border-radius:var(--radius-md); padding:0.5rem; text-align:center;">
+                  <div style="font-size:0.75rem; font-weight:700; margin-bottom:0.25rem;">${d.document_type}</div>
+                  <img src="/api/documents/${d.id}/file" style="max-width:100%; max-height:220px; object-fit:contain; border-radius:var(--radius-sm);" alt="Document preview" onerror="this.src=''; this.alt='Image stored securely (auth required)';" />
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }
+
+        document.getElementById('modalCaseDetails').innerHTML = `
+          <div style="background:var(--slate-50); padding:1rem; border-radius:var(--radius-md); margin-bottom:1rem; font-size:0.85rem;">
+            <strong>Flagged Reason:</strong> ${escapeHtml(data.case.reviewer_notes || data.case.summary_reason || 'Manual review required')}<br>
+            <strong>Confidence Score:</strong> ${Math.round(data.case.confidence_score * 100)}%
+          </div>
+          ${imagesHtml}
+        `;
+
+        document.getElementById('modalReviewNotes').value = '';
+        document.getElementById('caseModal').classList.add('active');
+      } catch (err) {
+        alert('Could not load case details: ' + err.message);
+      }
+    };
+
+    // Modal Case Actions
+    document.getElementById('btnApproveCase').addEventListener('click', () => resolveCase('APPROVED'));
+    document.getElementById('btnRejectCase').addEventListener('click', () => resolveCase('REJECTED'));
+
+    async function resolveCase(actionStatus) {
+      if (!state.activeReviewCase) return;
+      const notes = document.getElementById('modalReviewNotes').value.trim();
+      if (!notes) {
+        alert('Please enter reviewer notes explaining your decision.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/review-cases/${state.activeReviewCase.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.authToken}`,
+          },
+          body: JSON.stringify({
+            status: actionStatus,
+            reviewerNotes: notes,
+            resolutionReason: `Operator human decision: ${actionStatus}`,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        alert(`Case successfully marked as ${actionStatus}.`);
+        document.getElementById('caseModal').classList.remove('active');
+        loadReviewQueue();
+      } catch (err) {
+        alert('Error updating case: ' + err.message);
+      }
+    }
+
+    document.getElementById('btnCloseCaseModal').addEventListener('click', () => {
+      document.getElementById('caseModal').classList.remove('active');
+    });
+
+    // History Loader
+    async function loadHistory() {
+      const tbody = document.getElementById('historyTableBody');
+      try {
+        const res = await fetch('/api/verifications?limit=50');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        if (data.verifications.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--slate-400); padding:2rem;">No verification records found.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = data.verifications.map(v => `
+          <tr>
+            <td><strong>${escapeHtml(v.registration_name)}</strong></td>
+            <td>${escapeHtml(v.event_code)}</td>
+            <td><span class="badge-status badge-${v.decision.toLowerCase()}">${v.decision}</span></td>
+            <td style="font-family:var(--font-mono);">${Math.round(v.confidence_score * 100)}%</td>
+            <td style="max-width:320px; font-size:0.8rem; color:var(--slate-600);">${escapeHtml(v.summary_reason)}</td>
+            <td style="font-size:0.75rem; color:var(--slate-400);">${new Date(v.created_at).toLocaleString()}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--rose-600); padding:2rem;">${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    // Policy Loader & Saver
+    async function loadEventPolicy() {
+      try {
+        const res = await fetch('/api/events/HACK2026');
+        const data = await res.json();
+        if (res.ok && data.event) {
+          state.activeEvent = data.event;
+          document.getElementById('policyMinAge').value = data.event.min_age;
+          document.getElementById('policyMaxAge').value = data.event.max_age;
+          document.getElementById('policyRequireSelfie').checked = data.event.require_selfie;
+          document.getElementById('policyStrictName').checked = data.event.strict_name_matching;
+        }
+      } catch (err) {
+        console.warn('Could not fetch event policy:', err);
+      }
+    }
+
+    document.getElementById('policyForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!state.authToken) {
+        alert('Operator authentication required to update event policies. Please sign in.');
+        return;
+      }
+      if (!state.activeEvent) return;
+
+      try {
+        const res = await fetch(`/api/events/${state.activeEvent.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.authToken}`,
+          },
+          body: JSON.stringify({
+            minAge: document.getElementById('policyMinAge').value,
+            maxAge: document.getElementById('policyMaxAge').value,
+            requireSelfie: document.getElementById('policyRequireSelfie').checked,
+            strictNameMatching: document.getElementById('policyStrictName').checked,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        alert('Event verification policy successfully updated!');
+      } catch (err) {
+        alert('Failed to update policy: ' + err.message);
+      }
+    });
+
+    // System Diagnostics & Health Check
+    async function loadSystemDiagnostics() {
+      const diagEl = document.getElementById('systemDiagDetails');
+      const auditEl = document.getElementById('auditLogList');
+
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        const dot = document.getElementById('systemStatusDot');
+        const text = document.getElementById('systemStatusText');
+
+        if (data.status === 'ok') {
+          dot.style.background = 'var(--emerald-500)';
+          text.textContent = 'Operational';
+        } else {
+          dot.style.background = 'var(--amber-500)';
+          text.textContent = 'Degraded';
+        }
+
+        diagEl.innerHTML = `
+          <div><strong>Service Name:</strong> ${escapeHtml(data.service)} (v${escapeHtml(data.version)})</div>
+          <div><strong>Database Engine:</strong> <span style="font-family:var(--font-mono);">${data.database.engine.toUpperCase()}</span> (${data.database.status})</div>
+          <div><strong>AI Service Engine:</strong> ${data.ai_service.status} (${data.ai_service.url})</div>
+          <div><strong>Last Checked:</strong> ${new Date(data.timestamp).toLocaleString()}</div>
+        `;
+      } catch (err) {
+        diagEl.innerHTML = `<span style="color:var(--rose-600)">Could not connect to health endpoint: ${escapeHtml(err.message)}</span>`;
+      }
+
+      // Load audit logs if authorized
+      if (state.authToken) {
+        try {
+          const auditRes = await fetch('/api/audit-logs?limit=30', {
+            headers: { 'Authorization': `Bearer ${state.authToken}` }
+          });
+          const auditData = await auditRes.json();
+          if (auditRes.ok && auditData.logs) {
+            auditEl.innerHTML = auditData.logs.map(l => `
+              <div style="padding:0.35rem 0; border-bottom:1px solid var(--slate-200);">
+                <span style="color:var(--brand-600)">[${new Date(l.created_at).toLocaleTimeString()}]</span>
+                <strong>${escapeHtml(l.action)}</strong> (${escapeHtml(l.entity_type)}:${escapeHtml(l.entity_id.substring(0,8))})
+              </div>
+            `).join('');
+          }
+        } catch (e) {
+          auditEl.innerHTML = 'Sign in as admin to inspect immutable audit trail.';
+        }
+      } else {
+        auditEl.innerHTML = 'Sign in as admin to inspect immutable audit trail.';
+      }
+    }
+
+    // Authentication Dialog & Sign In
+    const authBtn = document.getElementById('authBtn');
+    const authModal = document.getElementById('authModal');
+    authBtn.addEventListener('click', () => {
+      if (state.currentUser) {
+        // Sign Out
+        localStorage.removeItem('verifyid_token');
+        state.authToken = null;
+        state.currentUser = null;
+        updateAuthUI();
+        alert('Signed out successfully.');
+      } else {
+        authModal.classList.add('active');
+      }
+    });
+
+    document.getElementById('btnCloseAuthModal').addEventListener('click', () => {
+      authModal.classList.remove('active');
+    });
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Authentication failed');
+
+        state.authToken = data.token;
+        state.currentUser = data.user;
+        localStorage.setItem('verifyid_token', data.token);
+        authModal.classList.remove('active');
+        updateAuthUI();
+        alert(`Welcome, ${data.user.fullName} (${data.user.role.toUpperCase()})!`);
+        loadReviewQueue();
+      } catch (err) {
+        alert('Login Error: ' + err.message);
+      }
+    });
+
+    async function checkExistingAuth() {
+      if (!state.authToken) return;
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${state.authToken}` }
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+          state.currentUser = data.user;
+          updateAuthUI();
+        } else {
+          state.authToken = null;
+          localStorage.removeItem('verifyid_token');
+        }
+      } catch (err) {
+        state.authToken = null;
+      }
+    }
+
+    function updateAuthUI() {
+      if (state.currentUser) {
+        authBtn.textContent = `Sign Out (${state.currentUser.fullName.split(' ')[0]})`;
+        authBtn.style.background = 'var(--brand-700)';
+      } else {
+        authBtn.textContent = 'Operator Sign In';
+        authBtn.style.background = 'var(--slate-800)';
+      }
+    }
+
+    function escapeHtml(val) {
+      if (val === null || val === undefined) return '';
+      return String(val)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // Initial boot
+    document.getElementById('btnRefreshQueue').addEventListener('click', loadReviewQueue);
+    document.getElementById('btnRefreshHistory').addEventListener('click', loadHistory);
+    checkExistingAuth();
+    loadSystemDiagnostics();
+  </script>
+</body>
 </html>

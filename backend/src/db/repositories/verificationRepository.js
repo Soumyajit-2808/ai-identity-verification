@@ -63,6 +63,7 @@ async function saveVerificationSignals(resultId, signalsArray, dbClient = null) 
 
   for (const signal of signalsArray) {
     const id = uuidv4();
+    const sigType = signal.signal_type || signal.signalType;
     await runner(
       `INSERT INTO verification_signals (
          id, result_id, signal_type, status, score, raw_details_json, reason
@@ -70,7 +71,7 @@ async function saveVerificationSignals(resultId, signalsArray, dbClient = null) 
       [
         id,
         resultId,
-        signal.signalType,
+        sigType,
         signal.status,
         signal.score !== undefined ? signal.score : null,
         signal.details ? JSON.stringify(signal.details) : null,

@@ -74,7 +74,8 @@ async function query(text, params = []) {
     order.push(parseInt(idx, 10) - 1);
     return '?';
   });
-  const sqliteParams = order.length > 0 ? order.map(i => params[i]) : params;
+  const rawParams = order.length > 0 ? order.map(i => params[i]) : params;
+  const sqliteParams = rawParams.map(p => (p === undefined ? null : p));
 
   try {
     const trimmed = sqliteQuery.trim().toUpperCase();
