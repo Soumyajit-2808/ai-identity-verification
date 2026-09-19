@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # 1. Primary PostgreSQL Relational Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: verifyid_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-identity_verification}
+      POSTGRES_USER: ${POSTGRES_USER:-verifyid_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-verifyid_secret_pw_2026}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-verifyid_admin} -d ${POSTGRES_DB:-identity_verification}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # 2. AI & Computer Vision Verification Service (FastAPI + Tesseract + DeepFace)
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: verifyid_ai_service
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - AWS_REGION=${AWS_REGION:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # 3. Application Server & API Gateway (Node.js Express)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: verifyid_backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-verifyid_admin}:${POSTGRES_PASSWORD:-verifyid_secret_pw_2026}@postgres:5432/${POSTGRES_DB:-identity_verification}
+      - AI_SERVICE_URL=http://ai-service:8001
+      - JWT_SECRET=${JWT_SECRET:-PROD_SECURE_JWT_SECRET_VERIFYID_2026}
+      - PII_SALT=${PII_SALT:-PROD_PII_HMAC_SALT_KEY_2026}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+    volumes:
+      - document_uploads:/app/uploads/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  document_uploads:
