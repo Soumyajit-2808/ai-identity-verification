@@ -37,10 +37,15 @@ def count_faces_opencv(image_bgr: np.ndarray) -> int:
         faces = face_cascade.detectMultiScale(
             gray,
             scaleFactor=1.1,
-            minNeighbors=4,
-            minSize=(30, 30)
+            minNeighbors=5,
+            minSize=(40, 40)
         )
-        return len(faces)
+        if len(faces) <= 1:
+            return len(faces)
+        # Filter out minor false-positive boxes (e.g. shirt buttons/shadows) that are much smaller than the primary face
+        max_area = max(w * h for (x, y, w, h) in faces)
+        significant_faces = [f for f in faces if (f[2] * f[3]) >= 0.25 * max_area]
+        return len(significant_faces)
     except Exception:
         return 1  # Fallback to letting DeepFace handle detection
 

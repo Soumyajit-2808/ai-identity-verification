@@ -188,10 +188,17 @@ def extract_id_type_and_number(text: str) -> Tuple[Optional[str], str]:
     if voter_match and ("ELECTION" in upper or "VOTER" in upper or "EPIC" in upper):
         return voter_match.group(1), "VOTER_ID"
 
-    # 6. Student ID: Roll / Registration / Student ID patterns with explicit keyword
-    student_match = re.search(r"(?:STUDENT\s+ID|ROLL\s+NO|ENROLLMENT|REG(?:ISTRATION)?\s+NO)[\s:\-_]+([A-Z0-9\-]{4,15})\b", upper)
+    # 6. Student ID: Roll / Registration / Student ID patterns with explicit keyword or common university format
+    student_match = re.search(r"(?:STUDENT\s+ID|ROLL\s+NO|ENROLLMENT|REG(?:ISTRATION)?\s+NO|UNIV(?:ERSITY)?\s+NO|US\s+NO|UID\s+NO)[\s:\-_.]+\s*([A-Z0-9\-]{4,18})\b", upper)
     if student_match:
-        return student_match.group(1), "STUDENT_ID"
+        candidate_student_id = student_match.group(1).strip("-")
+        if candidate_student_id not in {"DATE", "BIRTH", "NAME", "GENDER", "COURSE", "BRANCH"}:
+            return candidate_student_id, "STUDENT_ID"
+
+    # Standard collegiate alphanumeric roll/registration pattern (e.g. 4BH23CS089, 1MS19CS001, 21BCSE101)
+    univ_roll_match = re.search(r"\b([0-9][A-Z]{2,4}[0-9]{2}[A-Z]{2,4}[0-9]{2,4})\b", upper)
+    if univ_roll_match:
+        return univ_roll_match.group(1), "STUDENT_ID"
 
     # 7. Explicitly Labeled Document ID Pattern
     # Only matches when preceded by an explicit identifier label (e.g. "ID NO: 12345678", "CARD NUMBER: ABC12345")
@@ -294,6 +301,14 @@ def is_plausible_name(val: str) -> bool:
     words = val.split()
     if not words:
         return False
+    # Avoid blood group fragments (e.g. "B+ve", "B Ve", "O Ve", "Rh")
+    blood_terms = {"VE", "POS", "NEG", "RH", "GROUP"}
+    if any(w.upper() in blood_terms for w in words):
+        return False
+    # A person's name with multiple single-character words like "S B Ve" is not a plausible full name
+    single_letters = sum(1 for w in words if len(w) == 1)
+    if single_letters >= 2 and len(words) <= 3:
+        return False
     # A name should consist primarily of alphabetic words
     for w in words:
         if not w.isalpha() and not all(c.isalpha() or c in "'-" for c in w):
@@ -312,6 +327,7 @@ def is_header_or_field_label(line: str) -> bool:
         "DOB", "DATE OF BIRTH", "ID", "STUDENT ID", "FATHER", "DEPARTMENT",
         "VALID", "EXPIRY", "ISSUE", "GENDER", "SEX", "SIGNATURE", "ADDRESS",
         "YEAR", "BRANCH", "COURSE", "SEM", "BLOOD", "PHOTO",
+        "AFFILIATED", "APPROVED", "ACCREDITED", "ESTD", "ESTABLISHED",
     ]
     return any(upper.startswith(prefix) for prefix in label_starters)
 
