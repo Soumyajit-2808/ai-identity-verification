@@ -218,4 +218,248 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
       client.release();
     }
   });
+
+  test('4. Real PostgreSQL Concurrency: Two independent transactions race to register the same ID number with different names', async () => {
+    // Acquire two completely separate connections from the pool
+    const client1 = await pool.connect();
+    const client2 = await pool.connect();
+
+    const contestedRawId = 'PG-RACE-ID-' + crypto.randomUUID();
+    const contestedIdHash = hashIdNumber(contestedRawId);
+
+    const regId1 = crypto.randomUUID();
+    const regId2 = crypto.randomUUID();
+    const docHash1 = crypto.randomUUID();
+    const docHash2 = crypto.randomUUID();
+
+    const client1Wrapper = { query: (sql, params) => client1.query(sql, params) };
+    const client2Wrapper = { query: (sql, params) => client2.query(sql, params) };
+
+    try {
+      // Step A: Start two independent transactions
+      await client1.query('BEGIN');
+      await client2.query('BEGIN');
+
+      await client1.query(
+        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, 'Alice Concurrent', 'PENDING')`,
+        [regId1, testEventId]
+      );
+      await client2.query(
+        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, 'Bob Concurrent', 'PENDING')`,
+        [regId2, testEventId]
+      );
+
+      // Step B & C: Fire both registerIdentity calls concurrently via Promise.all
+      const [res1, res2] = await Promise.all([
+        registerIdentity(
+          {
+            eventId: testEventId,
+            registrationId: regId1,
+            rawIdNumber: contestedRawId,
+            idType: 'AADHAAR',
+            registeredName: 'Alice Concurrent',
+            documentFileHash: docHash1,
+          },
+          client1Wrapper
+        ),
+        registerIdentity(
+          {
+            eventId: testEventId,
+            registrationId: regId2,
+            rawIdNumber: contestedRawId,
+            idType: 'AADHAAR',
+            registeredName: 'Bob Concurrent',
+            documentFileHash: docHash2,
+          },
+          client2Wrapper
+        ),
+      ]);
+
+      // Step D: Exactly one succeeded, exactly one conflicted
+      const winner = res1.registered ? res1 : res2;
+      const loser = !res1.registered ? res1 : res2;
+      const winnerName = res1.registered ? 'Alice Concurrent' : 'Bob Concurrent';
+      const loserClient = !res1.registered ? client1 : client2;
+      const winnerClient = res1.registered ? client1 : client2;
+      const loserRegId = !res1.registered ? regId1 : regId2;
+      const winnerRegId = res1.registered ? regId1 : regId2;
+
+      expect(winner.registered).toBe(true);
+      expect(winner.conflict).toBe(false);
+
+      expect(loser.registered).toBe(false);
+      expect(loser.conflict).toBe(true);
+      expect(loser.conflictType).toBe('IDENTITY_REUSE');
+      expect(loser.isSamePersonResubmission).toBe(false);
+
+      // Step F: Simulate verification route pipeline logic on the losing transaction:
+      // Conflict becomes REVIEW with high-priority review case rather than an error or 500
+      let finalDecision = loser.conflict ? 'REVIEW' : 'ELIGIBLE';
+      expect(finalDecision).toBe('REVIEW');
+
+      // In the losing transaction, create a review case and update registration to REVIEW_REQUIRED
+      // This proves the losing PostgreSQL transaction remained healthy and un-aborted!
+      const revCaseId = crypto.randomUUID();
+      const verifResultId = crypto.randomUUID();
+      const verifReqId = crypto.randomUUID();
+
+      await loserClient.query(
+        `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
+        [verifReqId, loserRegId, testEventId]
+      );
+      await loserClient.query(
+        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
+         VALUES ($1, $2, $3, 'REVIEW', 0.55, 0.45)`,
+        [verifResultId, verifReqId, loserRegId]
+      );
+      await loserClient.query(
+        `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status)
+         VALUES ($1, $2, $3, $4, 'HIGH', 'OPEN')`,
+        [revCaseId, verifResultId, loserRegId, testEventId]
+      );
+      await loserClient.query(
+        `UPDATE registrations SET status = 'REVIEW_REQUIRED' WHERE id = $1`,
+        [loserRegId]
+      );
+
+      // In the winning transaction, update registration to VERIFIED
+      await winnerClient.query(
+        `UPDATE registrations SET status = 'VERIFIED' WHERE id = $1`,
+        [winnerRegId]
+      );
+
+      // Both transactions commit cleanly
+      await client1.query('COMMIT');
+      await client2.query('COMMIT');
+
+      // Step G: Check database consistency after both transactions finish
+      const regRows = await pool.query(
+        `SELECT registered_name, document_file_hash FROM identity_registry WHERE event_id = $1 AND id_number_hash = $2`,
+        [testEventId, contestedIdHash]
+      );
+      // Exactly ONE row exists in PostgreSQL
+      expect(regRows.rows.length).toBe(1);
+      // Original authoritative record was never overwritten
+      expect(regRows.rows[0].registered_name).toBe(winnerName);
+
+      // Both registrations exist with their respective statuses
+      const regStatusCheck = await pool.query(
+        `SELECT id, status FROM registrations WHERE id IN ($1, $2)`,
+        [regId1, regId2]
+      );
+      expect(regStatusCheck.rows.length).toBe(2);
+
+      // Review case was persisted for the loser
+      const caseCheck = await pool.query(
+        `SELECT id, priority, status FROM review_cases WHERE id = $1`,
+        [revCaseId]
+      );
+      expect(caseCheck.rows.length).toBe(1);
+      expect(caseCheck.rows[0].status).toBe('OPEN');
+      expect(caseCheck.rows[0].priority).toBe('HIGH');
+    } finally {
+      client1.release();
+      client2.release();
+    }
+  });
+
+  test('5. Real PostgreSQL Concurrency: Two independent transactions race to register the same document_file_hash', async () => {
+    const clientA = await pool.connect();
+    const clientB = await pool.connect();
+
+    const sharedDocHash = 'doc-hash-race-' + crypto.randomUUID();
+    const rawIdA = 'PG-DOC-A-' + crypto.randomUUID();
+    const rawIdB = 'PG-DOC-B-' + crypto.randomUUID();
+
+    const regIdA = crypto.randomUUID();
+    const regIdB = crypto.randomUUID();
+
+    const clientAWrapper = { query: (sql, params) => clientA.query(sql, params) };
+    const clientBWrapper = { query: (sql, params) => clientB.query(sql, params) };
+
+    try {
+      await clientA.query('BEGIN');
+      await clientB.query('BEGIN');
+
+      await clientA.query(
+        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, 'Doc User A', 'PENDING')`,
+        [regIdA, testEventId]
+      );
+      await clientB.query(
+        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, 'Doc User B', 'PENDING')`,
+        [regIdB, testEventId]
+      );
+
+      const [resA, resB] = await Promise.all([
+        registerIdentity(
+          {
+            eventId: testEventId,
+            registrationId: regIdA,
+            rawIdNumber: rawIdA,
+            idType: 'PASSPORT',
+            registeredName: 'Doc User A',
+            documentFileHash: sharedDocHash,
+          },
+          clientAWrapper
+        ),
+        registerIdentity(
+          {
+            eventId: testEventId,
+            registrationId: regIdB,
+            rawIdNumber: rawIdB,
+            idType: 'PASSPORT',
+            registeredName: 'Doc User B',
+            documentFileHash: sharedDocHash,
+          },
+          clientBWrapper
+        ),
+      ]);
+
+      const winner = resA.registered ? resA : resB;
+      const loser = !resA.registered ? resA : resB;
+      const loserClient = !resA.registered ? clientA : clientB;
+      const loserRegId = !resA.registered ? regIdA : regIdB;
+
+      expect(winner.registered).toBe(true);
+      expect(winner.conflict).toBe(false);
+
+      expect(loser.registered).toBe(false);
+      expect(loser.conflict).toBe(true);
+      expect(loser.conflictType).toBe('DUPLICATE_FILE');
+
+      // Losing transaction continues and creates review case without aborting
+      const revCaseId = crypto.randomUUID();
+      const verifResultId = crypto.randomUUID();
+      const verifReqId = crypto.randomUUID();
+
+      await loserClient.query(
+        `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
+        [verifReqId, loserRegId, testEventId]
+      );
+      await loserClient.query(
+        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
+         VALUES ($1, $2, $3, 'REVIEW', 0.60, 0.40)`,
+        [verifResultId, verifReqId, loserRegId]
+      );
+      await loserClient.query(
+        `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status)
+         VALUES ($1, $2, $3, $4, 'HIGH', 'OPEN')`,
+        [revCaseId, verifResultId, loserRegId, testEventId]
+      );
+
+      await clientA.query('COMMIT');
+      await clientB.query('COMMIT');
+
+      // Verify database consistency
+      const docRows = await pool.query(
+        `SELECT registered_name, document_file_hash FROM identity_registry WHERE event_id = $1 AND document_file_hash = $2`,
+        [testEventId, sharedDocHash]
+      );
+      expect(docRows.rows.length).toBe(1);
+    } finally {
+      clientA.release();
+      clientB.release();
+    }
+  });
 });
+

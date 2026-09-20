@@ -46,6 +46,20 @@ async function runMigrations() {
   const { exec, query, getDbType } = require('./connection');
   const isPostgres = getDbType() === 'postgres';
 
+  const isAlreadyExistsError = (err) => {
+    if (!err) return false;
+    if (err.code === '42701' || err.code === '42P07' || err.code === '42710') return true;
+    const msg = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+    return msg.includes('duplicate column') || msg.includes('already exists') || msg.includes('duplicate index');
+  };
+
+  const isTableNotExistsError = (err) => {
+    if (!err) return false;
+    if (err.code === '42P01') return true;
+    const msg = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+    return msg.includes('no such table') || msg.includes('does not exist');
+  };
+
   // --- Pre-schema incremental migrations for existing installations ---
 
   // 1. If identity_documents already exists in an older database, ensure event_id column exists before creating index on it
@@ -64,7 +78,11 @@ async function runMigrations() {
       await query(`ALTER TABLE identity_documents ADD COLUMN event_id TEXT REFERENCES events(id) ON DELETE CASCADE`);
       console.log('[Migration] Added missing event_id column to identity_documents.');
     }
-  } catch (_docColErr) {}
+  } catch (err) {
+    if (!isAlreadyExistsError(err) && !isTableNotExistsError(err)) {
+      throw new Error(`[Migration Error] Failed adding event_id column to identity_documents: ${err.message}`);
+    }
+  }
 
   // 2. If audit_logs already exists in an older database, ensure organization_id column exists before creating index on it
   try {
@@ -82,7 +100,11 @@ async function runMigrations() {
       await query(`ALTER TABLE audit_logs ADD COLUMN organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE`);
       console.log('[Migration] Added missing organization_id column to audit_logs.');
     }
-  } catch (_auditColErr) {}
+  } catch (err) {
+    if (!isAlreadyExistsError(err) && !isTableNotExistsError(err)) {
+      throw new Error(`[Migration Error] Failed adding organization_id column to audit_logs: ${err.message}`);
+    }
+  }
 
   // 3. If identity_registry already exists in an older database installation, deduplicate before applying unique indexes
   try {
@@ -118,8 +140,10 @@ async function runMigrations() {
       // Drop legacy non-unique index if present
       await query(`DROP INDEX IF EXISTS idx_registry_event_hash`).catch(() => {});
     }
-  } catch (_tableNotYetExisting) {
-    // Expected on clean installation when table does not exist yet
+  } catch (err) {
+    if (!isTableNotExistsError(err)) {
+      throw new Error(`[Migration Error] Failed pre-schema deduplication on identity_registry: ${err.message}`);
+    }
   }
 
   // --- Run core schema (tables and indexes) ---
@@ -129,7 +153,11 @@ async function runMigrations() {
   try {
     await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_event_id_number ON identity_registry(event_id, id_number_hash)`);
     await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_event_file_hash ON identity_registry(event_id, document_file_hash)`);
-  } catch (_idxErr) {}
+  } catch (err) {
+    if (!isAlreadyExistsError(err)) {
+      throw new Error(`[Migration Error] Critical: Failed creating required unique constraints on identity_registry: ${err.message}`);
+    }
+  }
 
   // Backfill identity_documents.event_id from registrations if null
   try {
@@ -138,7 +166,11 @@ async function runMigrations() {
       SET event_id = (SELECT event_id FROM registrations WHERE registrations.id = identity_documents.registration_id)
       WHERE event_id IS NULL AND registration_id IS NOT NULL
     `);
-  } catch (_backfillErr) {}
+  } catch (err) {
+    if (!isTableNotExistsError(err)) {
+      throw new Error(`[Migration Error] Failed backfilling event_id on identity_documents: ${err.message}`);
+    }
+  }
 
   console.log('[Migration] Schema tables and indexes verified successfully.');
 
