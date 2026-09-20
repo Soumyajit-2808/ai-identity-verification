@@ -47,7 +47,7 @@ router.patch('/:id', requireAuth, requireRole(['admin', 'organizer']), async (re
       return res.status(404).json({ success: false, error: 'Event not found.' });
     }
 
-    if (existing.organization_id && req.user.organization_id && existing.organization_id !== req.user.organization_id) {
+    if (existing.organization_id && existing.organization_id !== req.user.organization_id) {
       return res.status(403).json({ success: false, error: 'Access denied: event belongs to another organization.' });
     }
 

@@ -157,7 +157,17 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/metrics', requireAuth, requireRole(['admin', 'reviewer']), async (req, res) => {
   try {
-    const orgId = req.user.organization_id || null;
+    const orgId = req.user.role === 'admin'
+      ? (req.query.organizationId || req.user.organization_id || null)
+      : (req.user.organization_id || null);
+
+    if (req.user.role !== 'admin' && !orgId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied: user must be associated with an organization to view metrics.',
+        code: 'FORBIDDEN',
+      });
+    }
     let totalQuery = 'SELECT COUNT(*) as cnt FROM verification_results vr JOIN verification_requests req ON vr.request_id = req.id JOIN events ev ON req.event_id = ev.id';
     let decisionsQuery = 'SELECT vr.decision, COUNT(*) as cnt FROM verification_results vr JOIN verification_requests req ON vr.request_id = req.id JOIN events ev ON req.event_id = ev.id';
     let reviewsQuery = "SELECT COUNT(*) as cnt FROM review_cases rc JOIN events ev ON rc.event_id = ev.id WHERE rc.status = 'OPEN'";

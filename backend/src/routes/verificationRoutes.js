@@ -261,6 +261,11 @@ router.post(
           reason: identityReuseCheck.reason,
           details: {},
         });
+        if (finalDecision !== 'INELIGIBLE') {
+          finalDecision = 'REVIEW';
+        }
+        finalRisk = Math.round(Math.min(1.0, finalRisk + 0.30) * 100) / 100;
+        summaryReasons.push(identityReuseCheck.reason);
       }
 
       // Recalculate confidence

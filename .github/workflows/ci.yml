@@ -138,4 +138,21 @@ jobs:
           curl -f http://localhost:3000/api/health
           # Verify Frontend is served
           curl -f -s http://localhost:3000/ | grep -i "Identity Verification"
+
+          # Real End-to-End Verification Test through live Docker services
+          echo "Executing real end-to-end verification through Docker Compose..."
+          VERIFY_RES=$(curl -s -f -X POST http://localhost:3000/api/verify \
+            -F "file=@backend/tests/fixtures/valid_id.png" \
+            -F "registration_name=Rahul Sharma" \
+            -F "event_code=HACK2026")
+          echo "Verification response: $VERIFY_RES"
+
+          echo "$VERIFY_RES" | grep -q '"decision"'
+          echo "$VERIFY_RES" | grep -q '"confidence_score"'
+          echo "$VERIFY_RES" | grep -q '"summary_reason"'
+          echo "$VERIFY_RES" | grep -q '"requestId"'
+
+          # Verify database record persisted in PostgreSQL container
+          docker compose exec -T postgres psql -U verifyid_admin -d identity_verification -c "SELECT id, decision, confidence_score FROM verification_results LIMIT 1;" | grep -E "ELIGIBLE|REVIEW"
+
           docker compose down -v

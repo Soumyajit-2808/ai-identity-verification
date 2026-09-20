@@ -1657,8 +1657,8 @@
             'Authorization': `Bearer ${state.authToken}`,
           },
           body: JSON.stringify({
-            minAge: document.getElementById('policyMinAge').value,
-            maxAge: document.getElementById('policyMaxAge').value,
+            minAge: parseInt(document.getElementById('policyMinAge').value, 10),
+            maxAge: parseInt(document.getElementById('policyMaxAge').value, 10),
             requireSelfie: document.getElementById('policyRequireSelfie').checked,
             strictNameMatching: document.getElementById('policyStrictName').checked,
           }),
@@ -1692,8 +1692,8 @@
 
         diagEl.innerHTML = `
           <div><strong>Service Name:</strong> ${escapeHtml(data.service)} (v${escapeHtml(data.version)})</div>
-          <div><strong>Database Engine:</strong> <span style="font-family:var(--font-mono);">${data.database.engine.toUpperCase()}</span> (${data.database.status})</div>
-          <div><strong>AI Service Engine:</strong> ${data.ai_service.status} (${data.ai_service.url})</div>
+          <div><strong>Database Status:</strong> <span style="font-family:var(--font-mono);">${escapeHtml(data.database?.status || 'unknown')}</span></div>
+          <div><strong>AI Service Status:</strong> ${escapeHtml(data.ai_service?.status || 'unknown')}</div>
           <div><strong>Last Checked:</strong> ${new Date(data.timestamp).toLocaleString()}</div>
         `;
       } catch (err) {

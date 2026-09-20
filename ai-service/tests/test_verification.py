@@ -272,3 +272,23 @@ def test_eligibility_and_decision_policy():
     assert result.decision in ("ELIGIBLE", "REVIEW")
     assert result.confidence_score > 0.60
     assert len(result.signals) >= 5
+
+    # Missing ID number must route to REVIEW
+    identity_no_id = ExtractedIdentity(
+        name="Ananya Iyer",
+        date_of_birth="2003-04-15",
+        calculated_age=21,
+        id_number=None,
+        id_type="UNKNOWN"
+    )
+    result_no_id = evaluate_verification(
+        document_bytes=doc_bytes,
+        extracted=identity_no_id,
+        registration_name="Ananya Iyer",
+        min_age=18,
+        max_age=100,
+        allowed_id_types=["PAN", "AADHAAR", "PASSPORT"]
+    )
+    assert result_no_id.decision == "REVIEW"
+    assert any(s.signal_type == "OCR" and s.status == "REVIEW" for s in result_no_id.signals)
+    assert "id number" in result_no_id.summary_reason.lower()

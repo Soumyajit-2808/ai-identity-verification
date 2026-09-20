@@ -29,13 +29,13 @@ function generateToken(user) {
       organizationId: user.organization_id,
     },
     JWT_SECRET,
-    { expiresIn: TOKEN_EXPIRY }
+    { algorithm: 'HS256', expiresIn: TOKEN_EXPIRY }
   );
 }
 
 function verifyToken(token) {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    return jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   } catch (err) {
     return null;
   }

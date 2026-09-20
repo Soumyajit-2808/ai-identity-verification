@@ -178,7 +178,7 @@ router.get('/documents/:id/file', requireAuth, requireRole(['reviewer', 'admin']
     }
 
     const doc = docRes.rows[0];
-    if (doc.organization_id && req.user.organization_id && doc.organization_id !== req.user.organization_id) {
+    if (doc.organization_id && (req.user.role !== 'admin' && doc.organization_id !== req.user.organization_id)) {
       return res.status(403).json({ success: false, error: 'Access denied: document belongs to another organization.' });
     }
 
@@ -199,8 +199,12 @@ router.get('/documents/:id/file', requireAuth, requireRole(['reviewer', 'admin']
       ipAddress: req.ip,
     });
 
+    const safeFilename = (doc.original_filename || 'document.jpg')
+      .replace(/["\r\n\\]/g, '_')
+      .replace(/[^\x20-\x7E]/g, '');
+
     res.setHeader('Content-Type', doc.mime_type || 'image/jpeg');
-    res.setHeader('Content-Disposition', `inline; filename="${doc.original_filename || 'document.jpg'}"`);
+    res.setHeader('Content-Disposition', `inline; filename="${safeFilename}"`);
     res.send(buffer);
   } catch (err) {
     next(err);

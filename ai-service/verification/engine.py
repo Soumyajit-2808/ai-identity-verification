@@ -108,17 +108,19 @@ def evaluate_verification(
         "has_id_number": bool(extracted.id_number),
         "id_type": extracted.id_type,
     }
-    if extracted.name and extracted.date_of_birth:
-        ocr_status = "PASSED"
-        ocr_score = 1.0 if extracted.id_number else 0.85
-        ocr_reason = f"Essential identity fields (name, date of birth) were extracted successfully. Document type identified as {extracted.id_type}."
-    else:
+    missing = []
+    if not extracted.name: missing.append("name")
+    if not extracted.date_of_birth: missing.append("date of birth")
+    if not extracted.id_number: missing.append("id number")
+
+    if missing:
         ocr_status = "REVIEW"
-        ocr_score = 0.40
-        missing = []
-        if not extracted.name: missing.append("name")
-        if not extracted.date_of_birth: missing.append("date of birth")
+        ocr_score = 0.40 if len(missing) > 1 else 0.65
         ocr_reason = f"OCR extraction was incomplete; could not reliably extract: {', '.join(missing)}."
+    else:
+        ocr_status = "PASSED"
+        ocr_score = 1.0
+        ocr_reason = f"Essential identity fields (name, date of birth, id number) were extracted successfully. Document type identified as {extracted.id_type}."
 
     signals.append(AtomicSignal(
         signal_type="OCR",
@@ -294,7 +296,8 @@ def evaluate_verification(
         if eligibility_signal.status == "REVIEW":
             reasons.append(eligibility_signal.reason)
         if ocr_status == "REVIEW":
-            reasons.append("incomplete OCR field extraction")
+            missing_str = f"incomplete OCR field extraction ({', '.join(missing)})" if missing else "incomplete OCR field extraction"
+            reasons.append(missing_str)
         if quality_res.status != "PASSED":
             reasons.append("suboptimal document quality")
         if tamper_res.risk_level != "LOW":

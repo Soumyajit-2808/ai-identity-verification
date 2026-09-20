@@ -115,3 +115,17 @@ The `audit_logs` table records critical platform actions:
 
 Audit records contain `actor_id`, `actor_role`, `action`, `entity_type`, `entity_id`, `event_id`, `details_json`, `ip_address`, and `created_at`.
 At the application API layer, audit logs are append-only: no routes or repository methods exist to modify or delete audit log entries.
+
+---
+
+## 7. AI Service Trust Boundary & Network Isolation
+
+The AI & Computer Vision service (`ai-service:8001`) is designed strictly as an **internal-only microservice**:
+- **Loopback & Private Network Binding**: In containerized environments, the service is hosted on a private internal bridge network (`verifyid_ai_service`) and bound to localhost loopback (`127.0.0.1:8001`), preventing external ingress exposure.
+- **Reverse Proxy Ingress Guard**: The Node.js Express application server acts as the authoritative reverse proxy and security boundary. All external clients communicate exclusively with the Node.js API gateway, which enforces:
+  - Global and route-specific IP rate limiting (`express-rate-limit`)
+  - Magic-byte binary payload validation and file size constraints (12 MB max)
+  - Role-based access control (RBAC) and JWT verification (`HS256`)
+  - Cross-origin resource sharing (CORS) enforcement
+  - Multi-tenant tenant boundary authorization
+- The AI service trusts authenticated internal requests forwarded by the Node.js gateway and must not be mapped to public network interfaces in production deployments.
