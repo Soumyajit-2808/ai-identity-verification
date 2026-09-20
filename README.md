@@ -141,7 +141,7 @@ ai-identity-verification/
 
 ### Prerequisites
 - **Node.js**: v22.5.0 or later (required for native `node:sqlite` engine)
-- **Python**: v3.11 or later
+- **Python**: v3.10 or later (v3.11+ recommended)
 - **Tesseract OCR** (optional for local OCR): `tesseract-ocr` package on Linux / macOS or installer on Windows.
 
 ### Method A: Local Native Development (Zero-Config SQLite)
@@ -164,15 +164,16 @@ ai-identity-verification/
    python -m venv venv
    # Activate virtualenv (Windows: .\venv\Scripts\activate | Unix: source venv/bin/activate)
    pip install -r requirements.txt
-   python -m uvicorn main:app --host 127.0.0.1 --port 8001
+   # On Windows, -X utf8 ensures UTF-8 stdout encoding for DeepFace logging
+   python -X utf8 -m uvicorn main:app --host 127.0.0.1 --port 8001
    ```
 
 4. **Install, Migrate & Start Backend Gateway**:
    ```bash
    cd ../backend
    npm install
-   node src/db/migrate.js     # Seeds initial organization, event HACK2026, and admin/reviewer users
-   npm start                  # Starts Express server on http://localhost:3000
+   npm run migrate     # Applies schema migrations and seeds default admin, reviewer & HACK2026 event
+   npm start           # Starts Express server on http://localhost:3000 (or 'npm run dev' for nodemon live reload)
    ```
 
 5. **Access the Application**:
@@ -201,7 +202,7 @@ Services will initialize on:
 
 ## 5. Automated Testing Suite
 
-The repository includes comprehensive automated test coverage across unit, integration, and end-to-end verification workflows:
+The repository includes comprehensive automated test coverage across unit, integration, concurrency, and end-to-end verification workflows:
 
 ### 1. Generate Synthetic Test Fixtures
 To generate clean, synthetic, non-PII test documents for automated testing:
@@ -210,22 +211,20 @@ python backend/tests/fixtures/generate_fixtures.py
 ```
 This generates programmatic test cards: `valid_id.png`, `minor_id.png`, `different_name_id.png`, `blurry_id.png`, and `selfie.png`.
 
-### 2. Run Backend & E2E Acceptance Tests
+### 2. Run Backend & Acceptance Tests
 ```bash
 cd backend
 npm test
 ```
-**Test Coverage Includes**:
+**Test Coverage Includes 8 Specialized Suites**:
 - `persistence.test.js`: Dual-engine database queries, exact duplicate file blocking, and cross-registration identity reuse detection.
 - `api.test.js`: Health diagnostics, rate limiting, JWT token generation, RBAC authorization, and input validation.
-- `e2e_scenarios.test.js`: Full multipart pipeline execution including:
-  - Valid adult applicant (`APPROVED`)
-  - Underage applicant rejection (`REJECTED`)
-  - Conflicting name manual review (`REVIEW`)
-  - Exact duplicate document rejection (`REJECTED`)
-  - Identity reuse under different identity (`REJECTED`)
-  - Missing file handling (`VALIDATION_ERROR`)
-  - Operator review queue retrieval and decision resolution (`RESOLVED`)
+- `e2e_scenarios.test.js`: Full multipart pipeline execution covering `ELIGIBLE` approvals, `INELIGIBLE` underage/duplicate rejections, name mismatch `REVIEW` escalation, and operator review case resolution.
+- `multitenancy.test.js`: Multi-tenant organization data isolation, event policy scoping, and reviewer permission boundaries.
+- `concurrency_invariants.test.js`: High-concurrency race condition testing, atomic review state transitions, and optimistic locking (`lock_version`).
+- `public_pii_sanitization.test.js`: Public API data minimization, ID masking (`XXXX-XXXX-1234`), raw OCR redaction, and internal path stripping.
+- `audit_corrections.test.js`: Comprehensive audit regression coverage for security hardening, atomic review transactions, and error sanitization.
+- `postgres_integration.test.js`: Production PostgreSQL parity, transactional rollback guarantees, and migration verification.
 
 ### 3. Run AI Service Unit Tests
 ```bash
@@ -245,28 +244,48 @@ python tests/run_tests.py
 The platform provides built-in health monitoring and telemetry endpoints:
 
 ```bash
-# System Health & Dependency Status
+# System Health & Dependency Status (Public)
 curl http://localhost:3000/api/health
 ```
 ```json
 {
-  "status": "healthy",
+  "status": "ok",
+  "timestamp": "2026-09-20T10:00:00.000Z",
+  "service": "identity-verification-backend",
   "version": "2.0.0",
-  "database": { "status": "connected", "engine": "sqlite" },
-  "aiService": { "status": "connected", "latencyMs": 12 }
+  "database": {
+    "status": "healthy"
+  },
+  "ai_service": {
+    "status": "healthy"
+  },
+  "components": {
+    "database": "healthy",
+    "ai_service": "healthy"
+  }
 }
 ```
 
 ```bash
-# Aggregated Metrics & Backlog Counters
-curl http://localhost:3000/api/metrics
+# Aggregated Metrics & Backlog Counters (Requires Admin or Reviewer JWT)
+curl -H "Authorization: Bearer <OPERATOR_JWT_TOKEN>" http://localhost:3000/api/metrics
 ```
 ```json
 {
-  "totalVerifications": 42,
-  "decisions": { "ELIGIBLE": 32, "REVIEW": 8, "INELIGIBLE": 2 },
-  "openReviews": 3,
-  "averageProcessingTimeMs": 310
+  "success": true,
+  "timestamp": "2026-09-20T10:00:00.000Z",
+  "organizationId": null,
+  "metrics": {
+    "totalVerifications": 42,
+    "decisions": {
+      "ELIGIBLE": 32,
+      "REVIEW": 8,
+      "INELIGIBLE": 2
+    },
+    "openReviews": 3,
+    "uptimeSeconds": 1420,
+    "memoryUsageMb": 65
+  }
 }
 ```
 
@@ -289,6 +308,7 @@ Detailed technical specifications are available in the [`docs/`](./docs/) direct
 
 1. **2D Biometric Selfie Matching vs. Presentation Attacks**:
    - The integrated DeepFace / FaceNet512 model performs 2D facial vector comparison. It does not perform active 3D liveness detection or presentation attack detection (PAD). In high-assurance environments, pair this with an interactive liveness provider.
+   - *Synthetic Test Fixtures*: Programmatically generated non-PII test fixtures (`valid_id.png`, `selfie.png`) contain geometric drawings rather than biological human faces and will safely route to `REVIEW` with `Face detection could not complete`. Live verification with real human portraits calculates deep embedding Euclidean distance against the similarity threshold (`0.30`).
 2. **Document Authenticity vs. Forensic Authority**:
    - The tamper risk engine evaluates metadata, EXIF anomalies, and visual artifacts. It does **not** cryptographically verify digital signatures from government certificate authorities (e.g., Aadhaar QR cryptographic signatures or ISO 7816 smart chip validation).
 3. **OCR Under Adverse Conditions**:
