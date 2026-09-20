@@ -46,56 +46,99 @@ async function runMigrations() {
   const { exec, query, getDbType } = require('./connection');
   const isPostgres = getDbType() === 'postgres';
 
-  // If table already exists with legacy duplicate file hashes, deduplicate before applying unique index
+  // --- Pre-schema incremental migrations for existing installations ---
+
+  // 1. If identity_documents already exists in an older database, ensure event_id column exists before creating index on it
+  try {
+    const docColsRes = isPostgres
+      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'identity_documents' AND column_name = 'event_id'`)
+      : await query(`PRAGMA table_info(identity_documents)`);
+    const tableExists = isPostgres
+      ? docColsRes.rows !== undefined
+      : docColsRes.rows && docColsRes.rows.length > 0;
+    const hasEventCol = isPostgres
+      ? docColsRes.rows && docColsRes.rows.length > 0
+      : docColsRes.rows && docColsRes.rows.some(r => r.name === 'event_id');
+
+    if (tableExists && !hasEventCol) {
+      await query(`ALTER TABLE identity_documents ADD COLUMN event_id TEXT REFERENCES events(id) ON DELETE CASCADE`);
+      console.log('[Migration] Added missing event_id column to identity_documents.');
+    }
+  } catch (_docColErr) {}
+
+  // 2. If audit_logs already exists in an older database, ensure organization_id column exists before creating index on it
+  try {
+    const auditColsRes = isPostgres
+      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'organization_id'`)
+      : await query(`PRAGMA table_info(audit_logs)`);
+    const tableExists = isPostgres
+      ? auditColsRes.rows !== undefined
+      : auditColsRes.rows && auditColsRes.rows.length > 0;
+    const hasOrgCol = isPostgres
+      ? auditColsRes.rows && auditColsRes.rows.length > 0
+      : auditColsRes.rows && auditColsRes.rows.some(r => r.name === 'organization_id');
+
+    if (tableExists && !hasOrgCol) {
+      await query(`ALTER TABLE audit_logs ADD COLUMN organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE`);
+      console.log('[Migration] Added missing organization_id column to audit_logs.');
+    }
+  } catch (_auditColErr) {}
+
+  // 3. If identity_registry already exists in an older database installation, deduplicate before applying unique indexes
   try {
     const tableCheckSql = isPostgres
       ? `SELECT table_name FROM information_schema.tables WHERE table_name = 'identity_registry'`
       : `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'identity_registry'`;
     const checkRes = await query(tableCheckSql);
     if (checkRes.rows && checkRes.rows.length > 0) {
+      // Deduplicate conflicting document file hashes (preserve authoritative earliest row)
       await query(`
         DELETE FROM identity_registry
         WHERE id NOT IN (
           SELECT id FROM (
-            SELECT MIN(id) AS id
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY event_id, document_file_hash ORDER BY created_at ASC, id ASC) as rn
             FROM identity_registry
-            GROUP BY event_id, document_file_hash
-          ) AS keep_rows
+          ) AS keep_docs
+          WHERE keep_docs.rn = 1
         )
       `);
+
+      // Deduplicate conflicting ID number hashes (preserve authoritative earliest row)
+      await query(`
+        DELETE FROM identity_registry
+        WHERE id NOT IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY event_id, id_number_hash ORDER BY created_at ASC, id ASC) as rn
+            FROM identity_registry
+          ) AS keep_ids
+          WHERE keep_ids.rn = 1
+        )
+      `);
+
+      // Drop legacy non-unique index if present
+      await query(`DROP INDEX IF EXISTS idx_registry_event_hash`).catch(() => {});
     }
   } catch (_tableNotYetExisting) {
     // Expected on clean installation when table does not exist yet
   }
 
+  // --- Run core schema (tables and indexes) ---
   await exec(cleanSql);
 
-  // Incremental migrations for existing installations where tables already existed
+  // --- Post-schema guarantees & backfills ---
   try {
-    const auditColsRes = isPostgres
-      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'organization_id'`)
-      : await query(`PRAGMA table_info(audit_logs)`);
-    const hasOrgCol = isPostgres
-      ? auditColsRes.rows.length > 0
-      : auditColsRes.rows.some(r => r.name === 'organization_id');
-    if (!hasOrgCol) {
-      await query(`ALTER TABLE audit_logs ADD COLUMN organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE`);
-      console.log('[Migration] Added missing organization_id column to audit_logs.');
-    }
-  } catch (_auditColErr) {}
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_event_id_number ON identity_registry(event_id, id_number_hash)`);
+    await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_event_file_hash ON identity_registry(event_id, document_file_hash)`);
+  } catch (_idxErr) {}
 
+  // Backfill identity_documents.event_id from registrations if null
   try {
-    const docColsRes = isPostgres
-      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'identity_documents' AND column_name = 'event_id'`)
-      : await query(`PRAGMA table_info(identity_documents)`);
-    const hasEventCol = isPostgres
-      ? docColsRes.rows.length > 0
-      : docColsRes.rows.some(r => r.name === 'event_id');
-    if (!hasEventCol) {
-      await query(`ALTER TABLE identity_documents ADD COLUMN event_id TEXT REFERENCES events(id) ON DELETE CASCADE`);
-      console.log('[Migration] Added missing event_id column to identity_documents.');
-    }
-  } catch (_docColErr) {}
+    await query(`
+      UPDATE identity_documents
+      SET event_id = (SELECT event_id FROM registrations WHERE registrations.id = identity_documents.registration_id)
+      WHERE event_id IS NULL AND registration_id IS NOT NULL
+    `);
+  } catch (_backfillErr) {}
 
   console.log('[Migration] Schema tables and indexes verified successfully.');
 

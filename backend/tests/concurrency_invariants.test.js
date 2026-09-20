@@ -382,4 +382,151 @@ describe('Concurrency Invariants & Database State Integrity', () => {
     expect(rCase.rows.length).toBe(1);
     expect(rCase.rows[0].priority).toBe('HIGH');
   });
+
+  test('Invariant 6: Concurrent requests with same ID number and conflicting names yield exactly 1 registry record, produce REVIEW with review case, and preserve original identity', async () => {
+    // Generate two distinct valid PNG buffers so neither is detected as a duplicate file
+    const png1 = Buffer.from([
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+      0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+      0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+      0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+      0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x31,
+      0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+      0x42, 0x60, 0x82,
+    ]);
+    const png2 = Buffer.from([
+      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+      0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+      0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+      0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+      0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x32,
+      0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+      0x42, 0x60, 0x82,
+    ]);
+
+    const contestedIdNumber = 'AADHAAR-CONCUR-777';
+    const contestedIdHash = hashIdNumber(contestedIdNumber);
+
+    // Override fetch mock temporarily for this test to return the same ID number for both
+    const savedFetch = global.fetch;
+    global.fetch = async (url, options) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/verify')) {
+        let regName = 'Standard User';
+        if (options && options.body && typeof options.body.get === 'function') {
+          regName = options.body.get('registration_name') || regName;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            verification: {
+              decision: 'ELIGIBLE',
+              confidence_score: 0.95,
+              risk_score: 0.05,
+              evidence_score: 0.95,
+              summary_reason: 'Automated AI checks passed.',
+              extracted_identity: {
+                name: regName,
+                date_of_birth: '1995-05-15',
+                calculated_age: 30,
+                id_number: contestedIdNumber,
+                id_type: 'AADHAAR',
+                institution: null,
+              },
+              signals: [
+                { signal_type: 'OCR', status: 'PASSED', score: 1.0, reason: 'OCR pass.' },
+                { signal_type: 'QUALITY', status: 'PASSED', score: 1.0, reason: 'Quality pass.' },
+                { signal_type: 'TAMPER', status: 'PASSED', score: 1.0, reason: 'Tamper pass.' },
+                { signal_type: 'ELIGIBILITY', status: 'PASSED', score: 1.0, reason: 'Age pass.' },
+                { signal_type: 'NAME_MATCH', status: 'PASSED', score: 1.0, reason: 'Name pass.' },
+              ],
+            },
+          }),
+        };
+      }
+      return originalFetch(url, options);
+    };
+
+    try {
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/verify')
+          .field('registration_name', 'First Participant Alice')
+          .field('event_code', 'HACK2026')
+          .attach('file', png1, 'alice.png'),
+        request(app)
+          .post('/api/verify')
+          .field('registration_name', 'Second Participant Bob')
+          .field('event_code', 'HACK2026')
+          .attach('file', png2, 'bob.png'),
+      ]);
+
+      expect(res1.status).toBe(200);
+      expect(res2.status).toBe(200);
+
+      const decisions = [res1.body.decision, res2.body.decision];
+      expect(decisions).toContain('REVIEW');
+
+      const reviewRes = res1.body.decision === 'REVIEW' ? res1.body : res2.body;
+      const eligibleRes = res1.body.decision === 'ELIGIBLE' ? res1.body : res2.body;
+
+      // Assert review response signals and scores
+      expect(reviewRes.risk_score).toBeGreaterThanOrEqual(0.40);
+      expect(reviewRes.confidence_score).toBeLessThan(eligibleRes.confidence_score);
+      const reuseSignal = reviewRes.signals.find(s => s.signal_type === 'IDENTITY_REUSE' || s.signalType === 'IDENTITY_REUSE');
+      expect(reuseSignal).toBeDefined();
+      expect(reuseSignal.status).toBe('REVIEW');
+      expect(reviewRes.reviewCaseId).toBeDefined();
+
+      // Assert review case in DB
+      const rCase = await query(`SELECT * FROM review_cases WHERE id = $1`, [reviewRes.reviewCaseId]);
+      expect(rCase.rows.length).toBe(1);
+      expect(rCase.rows[0].status).toBe('OPEN');
+      expect(rCase.rows[0].priority).toBe('HIGH');
+
+      // Assert database invariant: EXACTLY ONE record in identity_registry for contested ID
+      const regRecords = await query(
+        `SELECT * FROM identity_registry WHERE event_id = $1 AND id_number_hash = $2`,
+        [testEventId, contestedIdHash]
+      );
+      expect(regRecords.rows.length).toBe(1);
+
+      // Assert original registrant name was preserved
+      const originalName = eligibleRes.identity.name;
+      expect(regRecords.rows[0].registered_name).toBe(originalName);
+    } finally {
+      global.fetch = savedFetch;
+    }
+  });
+
+  test('Invariant 7: Unexpected database errors inside transaction propagate and abort transaction without committing partial state', async () => {
+    const { transaction } = require('../src/db/connection');
+    const testRegId = crypto.randomUUID();
+
+    let threwError = false;
+    try {
+      await transaction(async (txClient) => {
+        await txClient.query(
+          `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, 'Temp User', 'PENDING')`,
+          [testRegId, testEventId]
+        );
+        // Execute an intentionally malformed query to cause an unexpected error
+        await txClient.query(`INSERT INTO non_existent_table_xyz VALUES ('bad')`);
+      });
+    } catch (err) {
+      threwError = true;
+    }
+
+    expect(threwError).toBe(true);
+
+    // Assert that the transaction was rolled back and 'Temp User' was NOT committed
+    const check = await query(`SELECT * FROM registrations WHERE id = $1`, [testRegId]);
+    expect(check.rows.length).toBe(0);
+  });
 });

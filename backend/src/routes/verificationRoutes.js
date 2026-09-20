@@ -204,7 +204,7 @@ router.post(
         if (finalDecision !== 'INELIGIBLE') {
           finalDecision = 'REVIEW';
         }
-        finalRisk = Math.min(1.0, finalRisk + 0.35);
+        finalRisk = Math.round(Math.min(1.0, finalRisk + 0.35) * 100) / 100;
         summaryReasons.push('document file was previously submitted');
       } else {
         signals.push({
@@ -240,7 +240,7 @@ router.post(
           if (finalDecision !== 'INELIGIBLE') {
             finalDecision = 'REVIEW';
           }
-          finalRisk = Math.min(1.0, finalRisk + 0.40);
+          finalRisk = Math.round(Math.min(1.0, finalRisk + 0.40) * 100) / 100;
           summaryReasons.push('ID number reuse detected with conflicting participant name');
         }
       } else if (identityReuseCheck.canCheck) {
@@ -336,7 +336,7 @@ router.post(
             if (finalDecision !== 'INELIGIBLE') {
               finalDecision = 'REVIEW';
             }
-            finalRisk = Math.min(1.0, finalRisk + 0.35);
+            finalRisk = Math.round(Math.min(1.0, finalRisk + 0.35) * 100) / 100;
             finalConfidence = Math.max(0.10, Math.min(0.98, aiVerification.evidence_score * (1.0 - (finalRisk * 0.7))));
             finalConfidence = Math.round(finalConfidence * 100) / 100;
             finalSummaryReason = (finalSummaryReason.includes('Manual review') ? finalSummaryReason : `Manual review is required: ${finalSummaryReason}`) + '; document file was previously submitted (concurrency detected)';
@@ -368,7 +368,7 @@ router.post(
               if (finalDecision !== 'INELIGIBLE') {
                 finalDecision = 'REVIEW';
               }
-              finalRisk = Math.min(1.0, finalRisk + 0.40);
+              finalRisk = Math.round(Math.min(1.0, finalRisk + 0.40) * 100) / 100;
               finalConfidence = Math.max(0.10, Math.min(0.98, aiVerification.evidence_score * (1.0 - (finalRisk * 0.7))));
               finalConfidence = Math.round(finalConfidence * 100) / 100;
               finalSummaryReason = (finalSummaryReason.includes('Manual review') ? finalSummaryReason : `Manual review is required: ${finalSummaryReason}`) + '; ID number reuse detected with conflicting participant name (concurrency detected)';
@@ -408,8 +408,13 @@ router.post(
                 finalDecision = 'REVIEW';
               }
               const conflictSignalType = regResult.conflictType === 'DUPLICATE_FILE' ? 'DUPLICATE_FILE' : 'IDENTITY_REUSE';
+              if (conflictSignalType === 'DUPLICATE_FILE') {
+                duplicateFileCheck = { isDuplicate: true, existingRegistrationId: regResult.existingRecord?.registration_id };
+              } else {
+                identityReuseCheck = { isReused: true, previousName: regResult.existingRecord?.registered_name };
+              }
               const riskInc = conflictSignalType === 'DUPLICATE_FILE' ? 0.35 : 0.40;
-              finalRisk = Math.min(1.0, finalRisk + riskInc);
+              finalRisk = Math.round(Math.min(1.0, finalRisk + riskInc) * 100) / 100;
               finalConfidence = Math.max(0.10, Math.min(0.98, aiVerification.evidence_score * (1.0 - (finalRisk * 0.7))));
               finalConfidence = Math.round(finalConfidence * 100) / 100;
               finalSummaryReason = (finalSummaryReason.includes('Manual review') ? finalSummaryReason : `Manual review is required: ${finalSummaryReason}`) + `; ${conflictSignalType.toLowerCase().replace('_', ' ')} prevented by database constraint`;

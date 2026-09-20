@@ -142,6 +142,16 @@ async function registerIdentity({
   const maskedId = maskIdNumber(rawIdNumber);
   const id = uuidv4();
 
+  // If executing within an active transaction, establish a SAVEPOINT.
+  // In PostgreSQL, any statement error (such as a unique constraint violation) aborts
+  // the transaction block unless rolled back to a SAVEPOINT.
+  const savepointName = 'sp_id_reg_' + uuidv4().replace(/-/g, '_');
+  const useSavepoint = Boolean(dbClient);
+
+  if (useSavepoint) {
+    await runner(`SAVEPOINT ${savepointName}`);
+  }
+
   try {
     const res = await runner(
       `INSERT INTO identity_registry (
@@ -161,6 +171,10 @@ async function registerIdentity({
       ]
     );
 
+    if (useSavepoint) {
+      await runner(`RELEASE SAVEPOINT ${savepointName}`).catch(() => {});
+    }
+
     const persistedId = (res && res.rows && res.rows[0] && res.rows[0].id) ? res.rows[0].id : id;
     return {
       registered: true,
@@ -171,6 +185,12 @@ async function registerIdentity({
     };
   } catch (err) {
     if (isUniqueConstraintViolation(err)) {
+      if (useSavepoint) {
+        // Rollback to savepoint: restores PostgreSQL transaction state so subsequent queries succeed
+        await runner(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+        await runner(`RELEASE SAVEPOINT ${savepointName}`).catch(() => {});
+      }
+
       // Database unique constraint triggered! Either id_number_hash or document_file_hash exists.
       // Fetch authoritative existing row to determine exact nature of conflict without mutating it.
       const conflictRes = await runner(
@@ -178,6 +198,7 @@ async function registerIdentity({
                 ir.document_file_hash, ir.id_type, ir.created_at
          FROM identity_registry ir
          WHERE ir.event_id = $1 AND (ir.id_number_hash = $2 OR ir.document_file_hash = $3)
+         ORDER BY ir.created_at ASC, ir.id ASC
          LIMIT 1`,
         [eventId, idHash, documentFileHash]
       );
@@ -198,6 +219,14 @@ async function registerIdentity({
         idNumberMasked: maskedId,
         existingRecord,
       };
+    }
+
+    // If unexpected error, rollback to savepoint if active, then propagate
+    if (useSavepoint) {
+      try {
+        await runner(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+        await runner(`RELEASE SAVEPOINT ${savepointName}`);
+      } catch (_) {}
     }
 
     // Unexpected database failure MUST propagate to abort transaction

@@ -224,4 +224,19 @@ describe('Database & Persistence Layer', () => {
     expect(logs.length).toBeGreaterThan(0);
     expect(logs[0].action).toBe('REVIEW_CASE_RESOLVED');
   });
+
+  test('6. Migration idempotency and unique constraints verification', async () => {
+    // Verify runMigrations is idempotent when executed again
+    await expect(runMigrations()).resolves.not.toThrow();
+
+    // Verify unique indexes exist on identity_registry
+    const { query, getDbType } = require('../src/db/connection');
+    if (getDbType() === 'sqlite') {
+      const indexesRes = await query(`PRAGMA index_list('identity_registry')`);
+      const uniqueIndexNames = indexesRes.rows.filter(r => r.unique).map(r => r.name);
+      expect(uniqueIndexNames.some(name => name.includes('idx_uq_event_id_number'))).toBe(true);
+      expect(uniqueIndexNames.some(name => name.includes('idx_uq_event_file_hash'))).toBe(true);
+    }
+  });
 });
+
