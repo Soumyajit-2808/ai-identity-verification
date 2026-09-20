@@ -147,10 +147,24 @@ def verify_faces(
                     reason=f"Selfie face does not sufficiently match the document photo (distance {distance:.4f} > threshold {threshold:.2f})."
                 )
 
-        except ValueError as val_err:
-            err_msg = str(val_err).lower()
-            if "face could not be detected" in err_msg:
-                # Determine which image was missing the face
+        except (ValueError, Exception) as val_err:
+            cause_msg = str(getattr(val_err, "__cause__", "") or "").lower()
+            err_msg = (str(val_err) + " " + cause_msg).lower()
+            if "img1_path" in err_msg:
+                return FaceVerificationResult(
+                    status="REVIEW",
+                    match=None,
+                    state="FACE_NOT_DETECTED_IN_DOCUMENT",
+                    reason="A clear human face could not be detected in the ID document."
+                )
+            if "img2_path" in err_msg:
+                return FaceVerificationResult(
+                    status="REVIEW",
+                    match=None,
+                    state="FACE_NOT_DETECTED_IN_SELFIE",
+                    reason="A clear human face could not be detected in the selfie photo."
+                )
+            if "face could not be detected" in err_msg or "facenotdetected" in err_msg:
                 return FaceVerificationResult(
                     status="REVIEW",
                     match=None,
