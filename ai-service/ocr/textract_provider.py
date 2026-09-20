@@ -3,7 +3,10 @@ AWS Textract OCR Provider
 """
 
 import os
-import boto3
+try:
+    import boto3
+except ImportError:
+    boto3 = None
 from ocr.base import BaseOCRProvider, OCRResult
 
 
@@ -14,7 +17,7 @@ class TextractOCRProvider(BaseOCRProvider):
         self.secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
 
     def is_available(self) -> bool:
-        return bool(self.access_key and self.secret_key and self.region)
+        return bool(boto3 is not None and self.access_key and self.secret_key and self.region)
 
     def extract_text(self, image_bytes: bytes) -> OCRResult:
         if not self.is_available():
