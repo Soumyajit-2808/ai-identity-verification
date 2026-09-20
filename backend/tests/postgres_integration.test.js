@@ -577,5 +577,121 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
       clientB.release();
     }
   });
+
+  test('7. Real PostgreSQL Concurrency: Two independent administrator transactions race to override an already APPROVED case with optimistic locking', async () => {
+    const clientAdminA = await pool.connect();
+    const clientAdminB = await pool.connect();
+
+    const regId = crypto.randomUUID();
+    const verifReqId = crypto.randomUUID();
+    const verifResultId = crypto.randomUUID();
+    const reviewCaseId = crypto.randomUUID();
+
+    try {
+      // 1. Setup initial state: registration VERIFIED, review_case already APPROVED
+      await pool.query(
+        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, 'Admin Race Contestant', 'VERIFIED')`,
+        [regId, testEventId]
+      );
+      await pool.query(
+        `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
+        [verifReqId, regId, testEventId]
+      );
+      await pool.query(
+        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
+         VALUES ($1, $2, $3, 'REVIEW', 0.80, 0.20)`,
+        [verifResultId, verifReqId, regId]
+      );
+      await pool.query(
+        `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status, reviewer_notes, resolution_reason, resolved_at)
+         VALUES ($1, $2, $3, $4, 'HIGH', 'APPROVED', 'Initial operator approval', 'Initial verification confirmed', CURRENT_TIMESTAMP)`,
+        [reviewCaseId, verifResultId, regId, testEventId]
+      );
+
+      // 2. Both administrator transactions start
+      await clientAdminA.query('BEGIN');
+      await clientAdminB.query('BEGIN');
+
+      // Admin update function enforcing optimistic lock on the read status ('APPROVED')
+      const adminUpdateCase = async (client, targetStatus, adminNotes, adminReason) => {
+        // Optimistic locking update: must match status that was read ('APPROVED')
+        const updRes = await client.query(
+          `UPDATE review_cases
+           SET status = $1, reviewer_notes = $2, resolution_reason = $3, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $4 AND status = 'APPROVED'`,
+          [targetStatus, adminNotes, adminReason, reviewCaseId]
+        );
+
+        if (updRes.rowCount === 0) {
+          // Concurrent conflict! Rollback losing transaction
+          await client.query('ROLLBACK');
+          return { success: false, conflict: true };
+        }
+
+        // Synchronize registration status in the SAME transaction
+        const regStatus = targetStatus === 'REJECTED' ? 'REJECTED' : (targetStatus === 'APPROVED' ? 'VERIFIED' : 'REVIEW_REQUIRED');
+        await client.query(
+          `UPDATE registrations SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [regStatus, regId]
+        );
+
+        // Write audit log in the SAME transaction
+        const auditId = crypto.randomUUID();
+        await client.query(
+          `INSERT INTO audit_logs (id, organization_id, actor_id, actor_role, action, entity_type, entity_id, event_id)
+           VALUES ($1, $2, 'admin-actor', 'admin', $3, 'REVIEW_CASE', $4, $5)`,
+          [auditId, testOrgId, 'ADMIN_OVERRIDE_' + targetStatus, reviewCaseId, testEventId]
+        );
+
+        await client.query('COMMIT');
+        return { success: true, conflict: false };
+      };
+
+      // 3. Concurrently fire conflicting admin overrides: Admin A -> REJECTED, Admin B -> OPEN
+      const [resA, resB] = await Promise.all([
+        adminUpdateCase(clientAdminA, 'REJECTED', 'Admin A discovered fraud', 'Fraudulent document detected upon audit'),
+        adminUpdateCase(clientAdminB, 'OPEN', 'Admin B requests re-evaluation', 'Re-evaluation required by supervisor'),
+      ]);
+
+      // Exactly ONE administrator transaction succeeds, exactly ONE conflicts
+      const results = [resA, resB];
+      const successCount = results.filter(r => r.success).length;
+      const conflictCount = results.filter(r => r.conflict).length;
+
+      expect(successCount).toBe(1);
+      expect(conflictCount).toBe(1);
+
+      const winningStatus = resA.success ? 'REJECTED' : 'OPEN';
+      const winningRegStatus = winningStatus === 'REJECTED' ? 'REJECTED' : 'REVIEW_REQUIRED';
+
+      // 4. Assert database consistency
+      // Review case has winning administrator status
+      const caseCheck = await pool.query(
+        `SELECT status, reviewer_notes, resolution_reason FROM review_cases WHERE id = $1`,
+        [reviewCaseId]
+      );
+      expect(caseCheck.rows.length).toBe(1);
+      expect(caseCheck.rows[0].status).toBe(winningStatus);
+
+      // Registration has winning status
+      const regCheck = await pool.query(
+        `SELECT status FROM registrations WHERE id = $1`,
+        [regId]
+      );
+      expect(regCheck.rows.length).toBe(1);
+      expect(regCheck.rows[0].status).toBe(winningRegStatus);
+
+      // Audit log has exactly ONE override entry matching winning admin decision
+      const auditCheck = await pool.query(
+        `SELECT action FROM audit_logs WHERE entity_id = $1 AND action LIKE 'ADMIN_OVERRIDE_%'`,
+        [reviewCaseId]
+      );
+      expect(auditCheck.rows.length).toBe(1);
+      expect(auditCheck.rows[0].action).toBe('ADMIN_OVERRIDE_' + winningStatus);
+    } finally {
+      clientAdminA.release();
+      clientAdminB.release();
+    }
+  });
 });
 

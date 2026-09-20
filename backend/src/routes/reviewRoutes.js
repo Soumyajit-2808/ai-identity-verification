@@ -99,8 +99,8 @@ router.patch(['/review-cases/:id', '/reviews/:id'], requireAuth, requireRole(['r
         throw adminErr;
       }
 
-      // Optimistic lock condition in SQL
-      const lockStatus = expectedStatus || (req.user.role !== 'admin' ? currentCase.status : null);
+      // Optimistic lock condition in SQL: ALL roles (including admin) require optimistic locking on status read
+      const lockStatus = expectedStatus || currentCase.status;
       const updateResult = await updateReviewCase(req.params.id, {
         status,
         assignedTo: req.user.id,

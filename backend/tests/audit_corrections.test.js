@@ -538,6 +538,19 @@ describe('Audit Corrections & Invariant Tests', () => {
       expect(res.status).toBe(409);
       expect(res.body.code).toBe('CASE_STATUS_CONFLICT');
     });
+
+    test('Administrator can override an already resolved case when not modified concurrently', async () => {
+      const res = await request(app)
+        .patch(`/api/review-cases/${reviewCaseId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          status: 'REJECTED',
+          resolutionReason: 'Admin audit discovered invalid credentials',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.case.status).toBe('REJECTED');
+    });
   });
 
   describe('6. Repository Schema and Frontend Synchronization', () => {

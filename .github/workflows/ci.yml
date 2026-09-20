@@ -43,8 +43,10 @@ jobs:
         working-directory: ./backend
         run: npm ci
 
-      - name: Run Database Migrations
+      - name: Run Database Migrations (PostgreSQL)
         working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/identity_verification_test
         run: npm run migrate
 
       - name: Run Backend Unit, Integration & E2E Tests
@@ -121,9 +123,11 @@ jobs:
           docker compose up -d --build
           echo "Waiting for services to become healthy..."
           for i in {1..30}; do
-            if curl -s http://localhost:8001/health | grep -q "healthy" && \
-               curl -s http://localhost:3000/api/health | grep -q "true"; then
-              echo "Services are healthy!"
+            AI_RES=$(curl -s -f http://localhost:8001/health 2>/dev/null || true)
+            BACKEND_RES=$(curl -s -f http://localhost:3000/api/health 2>/dev/null || true)
+            if echo "$AI_RES" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' && \
+               echo "$BACKEND_RES" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+              echo "Services are healthy (status: ok)!"
               break
             fi
             sleep 2
