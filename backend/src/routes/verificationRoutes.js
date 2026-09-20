@@ -10,13 +10,13 @@ const { transaction } = require('../db/connection');
 const { getEventByCode } = require('../db/repositories/eventRepository');
 const { createRegistration, updateRegistrationStatus } = require('../db/repositories/registrationRepository');
 const { saveDocumentRecord } = require('../db/repositories/documentRepository');
+const identityRegistryRepository = require('../db/repositories/identityRegistryRepository');
 const {
   checkDuplicateFile,
   checkIdentityReuse,
-  registerIdentity,
   maskIdNumber,
   isUniqueConstraintViolation,
-} = require('../db/repositories/identityRegistryRepository');
+} = identityRegistryRepository;
 const {
   createVerificationRequest,
   saveVerificationResult,
@@ -38,6 +38,39 @@ const upload = multer({
     fileSize: 12 * 1024 * 1024, // 12 MB
   },
 });
+
+/**
+ * Sanitizes verification signals for public applicant-facing responses,
+ * preventing leakage of prior participants' PII, registration IDs, or database records.
+ * Internal evidence is preserved in the database for reviewer/admin workflows.
+ */
+function sanitizeSignalsForPublicResponse(signals) {
+  if (!Array.isArray(signals)) return [];
+  return signals.map((sig) => {
+    const sanitized = { ...sig };
+    const sigType = (sanitized.signal_type || sanitized.signalType || '').toUpperCase();
+    const details = sanitized.details ? { ...sanitized.details } : {};
+
+    // Remove any sensitive cross-participant reference fields unconditionally
+    delete details.existingRegistrationId;
+    delete details.existingRecord;
+    delete details.previousName;
+    delete details.registered_name;
+
+    if (sigType === 'DUPLICATE_FILE') {
+      if (sanitized.status === 'REVIEW') {
+        sanitized.reason = 'This document has already been submitted for this event.';
+      }
+    } else if (sigType === 'IDENTITY_REUSE') {
+      if (sanitized.status === 'REVIEW') {
+        sanitized.reason = 'The extracted ID number was previously registered for this event and requires manual review.';
+      }
+    }
+
+    sanitized.details = details;
+    return sanitized;
+  });
+}
 
 router.post(
   '/verify',
@@ -394,7 +427,7 @@ router.post(
 
         // 3. Register in deduplication registry with authoritative DB unique constraints
         if (!duplicateFileCheck.isDuplicate && (!identityReuseCheck.isReused || identityReuseCheck.isSamePersonResubmission)) {
-          const regResult = await registerIdentity(
+          const regResult = await identityRegistryRepository.registerIdentity(
             {
               eventId: event.id,
               registrationId: registration.id,
@@ -502,6 +535,7 @@ router.post(
           txClient
         );
 
+
         responsePayload = {
           success: true,
           decision: finalDecision,
@@ -532,7 +566,7 @@ router.post(
             idType: extractedIdentity.id_type || 'UNKNOWN',
             institution: extractedIdentity.institution || 'Not detected',
           },
-          signals,
+          signals: sanitizeSignalsForPublicResponse(signals),
         };
         transactionCommitted = true;
       });
@@ -581,5 +615,7 @@ router.get('/verifications/:id', requireAuth, requireRole(['reviewer', 'admin'])
     next(err);
   }
 });
+
+router.sanitizeSignalsForPublicResponse = sanitizeSignalsForPublicResponse;
 
 module.exports = router;

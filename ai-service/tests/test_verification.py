@@ -292,3 +292,161 @@ def test_eligibility_and_decision_policy():
     assert result_no_id.decision == "REVIEW"
     assert any(s.signal_type == "OCR" and s.status == "REVIEW" for s in result_no_id.signals)
     assert "id number" in result_no_id.summary_reason.lower()
+
+
+def test_face_verification_unavailable_routing():
+    from unittest.mock import patch
+    from verification.face import FaceVerificationResult, verify_faces
+    from verification.quality import QualityResult
+
+    img = np.full((500, 800), 180, dtype=np.uint8)
+    cv2.putText(img, "ID CARD", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, 0, 2)
+    _, buf = cv2.imencode(".jpg", img)
+    doc_bytes = buf.tobytes()
+
+    selfie_img = np.full((400, 400), 170, dtype=np.uint8)
+    _, s_buf = cv2.imencode(".jpg", selfie_img)
+    selfie_bytes = s_buf.tobytes()
+
+    identity = ExtractedIdentity(
+        name="Aditya Verma",
+        date_of_birth="2002-05-10",
+        calculated_age=23,
+        id_number="DEFGH5678J",
+        id_type="PAN"
+    )
+
+    quality_pass = QualityResult(
+        status="PASSED",
+        blur_score=150.0,
+        brightness_score=128.0,
+        contrast_score=60.0,
+        glare_ratio=0.0,
+        width=800,
+        height=500,
+        aspect_ratio=1.6,
+        issues=[],
+        reason="Quality acceptable."
+    )
+
+    # 1. Direct verify_faces runtime exception test (sanitized reason, no stack trace)
+    with patch("cv2.imdecode", side_effect=RuntimeError("Low-level OpenCV fault")):
+        res_exc = verify_faces(doc_bytes, selfie_bytes)
+        assert res_exc.status == "UNAVAILABLE"
+        assert res_exc.state == "SERVICE_ERROR"
+        assert "biometric verification could not be completed" in res_exc.reason.lower()
+        assert "traceback" not in res_exc.reason.lower()
+        assert "low-level" not in res_exc.reason.lower()
+
+    # 2. Decision engine routing when biometric check is UNAVAILABLE
+    unavailable_face = FaceVerificationResult(
+        status="UNAVAILABLE",
+        match=None,
+        state="SERVICE_ERROR",
+        reason="Biometric verification could not be completed; manual review is required."
+    )
+    with patch("verification.engine.verify_faces", return_value=unavailable_face), \
+         patch("verification.engine.analyze_image_quality", return_value=quality_pass):
+        result_unavail = evaluate_verification(
+            document_bytes=doc_bytes,
+            extracted=identity,
+            registration_name="Aditya Verma",
+            min_age=18,
+            max_age=100,
+            selfie_bytes=selfie_bytes,
+            require_selfie=False,
+            allowed_id_types=["PAN"]
+        )
+        assert result_unavail.decision == "REVIEW"
+        assert result_unavail.decision != "ELIGIBLE"
+        face_signal = next((s for s in result_unavail.signals if s.signal_type == "FACE_MATCH"), None)
+        assert face_signal is not None
+        assert face_signal.status == "UNAVAILABLE"
+        assert "biometric verification unavailable" in result_unavail.summary_reason.lower()
+        assert "traceback" not in face_signal.reason.lower()
+
+    # 3. Normal matching face (PASSED) produces ELIGIBLE when other checks pass
+    passed_face = FaceVerificationResult(
+        status="PASSED",
+        match=True,
+        state="MATCH_CONFIRMED",
+        distance=0.15,
+        threshold=0.30,
+        similarity_score=0.90,
+        reason="Selfie face matches the document photo."
+    )
+    with patch("verification.engine.verify_faces", return_value=passed_face), \
+         patch("verification.engine.analyze_image_quality", return_value=quality_pass):
+        result_passed = evaluate_verification(
+            document_bytes=doc_bytes,
+            extracted=identity,
+            registration_name="Aditya Verma",
+            min_age=18,
+            max_age=100,
+            selfie_bytes=selfie_bytes,
+            require_selfie=True,
+            allowed_id_types=["PAN"]
+        )
+        assert result_passed.decision == "ELIGIBLE"
+        face_signal_passed = next((s for s in result_passed.signals if s.signal_type == "FACE_MATCH"), None)
+        assert face_signal_passed is not None
+        assert face_signal_passed.status == "PASSED"
+
+    # 4. Mismatching face (REVIEW) routes to REVIEW
+    mismatch_face = FaceVerificationResult(
+        status="REVIEW",
+        match=False,
+        state="MISMATCH",
+        distance=0.45,
+        threshold=0.30,
+        similarity_score=0.25,
+        reason="Selfie face does not sufficiently match the document photo."
+    )
+    with patch("verification.engine.verify_faces", return_value=mismatch_face), \
+         patch("verification.engine.analyze_image_quality", return_value=quality_pass):
+        result_mismatch = evaluate_verification(
+            document_bytes=doc_bytes,
+            extracted=identity,
+            registration_name="Aditya Verma",
+            min_age=18,
+            max_age=100,
+            selfie_bytes=selfie_bytes,
+            require_selfie=True,
+            allowed_id_types=["PAN"]
+        )
+        assert result_mismatch.decision == "REVIEW"
+
+    # 5. Optional missing selfie (SKIPPED) allows ELIGIBLE
+    with patch("verification.engine.analyze_image_quality", return_value=quality_pass):
+        result_no_selfie_optional = evaluate_verification(
+            document_bytes=doc_bytes,
+            extracted=identity,
+            registration_name="Aditya Verma",
+            min_age=18,
+            max_age=100,
+            selfie_bytes=None,
+            require_selfie=False,
+            allowed_id_types=["PAN"]
+        )
+        assert result_no_selfie_optional.decision == "ELIGIBLE"
+        face_signal_skipped = next((s for s in result_no_selfie_optional.signals if s.signal_type == "FACE_MATCH"), None)
+        assert face_signal_skipped is not None
+        assert face_signal_skipped.status == "SKIPPED"
+
+    # 6. Mandatory missing selfie routes to REVIEW
+    with patch("verification.engine.analyze_image_quality", return_value=quality_pass):
+        result_no_selfie_required = evaluate_verification(
+            document_bytes=doc_bytes,
+            extracted=identity,
+            registration_name="Aditya Verma",
+            min_age=18,
+            max_age=100,
+            selfie_bytes=None,
+            require_selfie=True,
+            allowed_id_types=["PAN"]
+        )
+        assert result_no_selfie_required.decision == "REVIEW"
+        face_signal_req = next((s for s in result_no_selfie_required.signals if s.signal_type == "FACE_MATCH"), None)
+        assert face_signal_req is not None
+        assert face_signal_req.status == "REVIEW"
+

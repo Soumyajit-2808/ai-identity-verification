@@ -22,10 +22,13 @@ from tests.test_verification import (
     test_quality_analysis,
     test_tamper_analysis,
     test_eligibility_and_decision_policy,
+    test_face_verification_unavailable_routing,
 )
 
 
 class AIServiceTestCase(unittest.TestCase):
+    def test_face_unavailable_routing(self):
+        test_face_verification_unavailable_routing()
     def test_dob_parsing(self):
         test_date_of_birth_parsing()
 

@@ -169,5 +169,5 @@ def verify_faces(
             status="UNAVAILABLE",
             match=None,
             state="SERVICE_ERROR",
-            reason=f"Biometric verification service exception: {str(err)}"
+            reason="Biometric verification could not be completed; manual review is required."
         )

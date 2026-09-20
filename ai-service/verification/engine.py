@@ -262,7 +262,7 @@ def evaluate_verification(
 
     if not name_res.matched: risk += 0.35
     if face_res.status == "FAILED": risk += 0.45
-    elif face_res.status == "REVIEW": risk += 0.30
+    elif face_res.status in ("REVIEW", "UNAVAILABLE"): risk += 0.35
 
     if doc_type_status == "REVIEW": risk += 0.35
 
@@ -286,7 +286,7 @@ def evaluate_verification(
         quality_res.status in ("FAILED", "REVIEW") or
         tamper_res.risk_level in ("MEDIUM", "HIGH") or
         not name_res.matched or
-        face_res.status in ("FAILED", "REVIEW") or
+        face_res.status in ("FAILED", "REVIEW", "UNAVAILABLE") or
         doc_type_status == "REVIEW" or
         (require_selfie and face_res.status == "NOT_PROVIDED") or
         risk_score >= 0.30
@@ -306,6 +306,8 @@ def evaluate_verification(
             reasons.append("registration name discrepancy")
         if face_res.status in ("FAILED", "REVIEW"):
             reasons.append("facial verification mismatch or detection anomaly")
+        elif face_res.status == "UNAVAILABLE":
+            reasons.append("biometric verification unavailable")
         if doc_type_status == "REVIEW":
             reasons.append("unsupported or unrecognized document type")
         if require_selfie and face_res.status == "NOT_PROVIDED":
