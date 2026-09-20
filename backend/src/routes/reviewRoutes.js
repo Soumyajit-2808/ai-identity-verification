@@ -12,7 +12,7 @@ const { updateRegistrationStatus } = require('../db/repositories/registrationRep
 const { logEvent } = require('../db/repositories/auditLogRepository');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { getDocumentBuffer } = require('../storage/documentStorage');
-const { query } = require('../db/connection');
+const { transaction, query } = require('../db/connection');
 
 const router = express.Router();
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -52,7 +52,7 @@ router.patch(['/review-cases/:id', '/reviews/:id'], requireAuth, requireRole(['r
     if (!uuidRegex.test(req.params.id)) {
       return res.status(400).json({ success: false, error: 'Invalid review case ID format.' });
     }
-    const { status, reviewerNotes, resolutionReason } = req.body;
+    const { status, reviewerNotes, resolutionReason, expectedStatus } = req.body;
     const validStatuses = ['OPEN', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'ESCALATED'];
 
     if (status && !validStatuses.includes(status)) {
@@ -62,76 +62,99 @@ router.patch(['/review-cases/:id', '/reviews/:id'], requireAuth, requireRole(['r
       });
     }
 
-    const currentCase = await getReviewCaseById(req.params.id, req.user.organization_id || null);
-    if (!currentCase) {
-      return res.status(404).json({ success: false, error: 'Review case not found or unauthorized.' });
-    }
+    let updatedCase = null;
 
-    // Concurrency / optimistic locking check if expectedStatus provided
-    const { expectedStatus } = req.body;
-    if (expectedStatus && currentCase.status !== expectedStatus) {
-      return res.status(409).json({
-        success: false,
-        error: `Review case status conflict: current status is '${currentCase.status}' (expected '${expectedStatus}').`,
-        code: 'CASE_STATUS_CONFLICT',
-      });
-    }
-
-    // Guard against modifying already resolved cases without administrator privilege
-    const isAlreadyResolved = ['APPROVED', 'REJECTED'].includes(currentCase.status);
-    if (isAlreadyResolved && req.user.role !== 'admin') {
-      return res.status(409).json({
-        success: false,
-        error: `Case is already resolved as '${currentCase.status}' and cannot be modified by reviewer. Administrator override required.`,
-        code: 'CASE_ALREADY_RESOLVED',
-      });
-    }
-
-    // Require resolutionReason when marking case APPROVED or REJECTED
-    if (['APPROVED', 'REJECTED'].includes(status)) {
-      if (!resolutionReason || typeof resolutionReason !== 'string' || !resolutionReason.trim()) {
-        return res.status(400).json({
-          success: false,
-          error: 'A valid resolution reason is required when approving or rejecting a review case.',
-        });
+    // Execute review case update, registration status sync, and audit logging in one atomic transaction
+    await transaction(async (txClient) => {
+      const currentCase = await getReviewCaseById(req.params.id, req.user.organization_id || null, txClient);
+      if (!currentCase) {
+        const notFoundErr = new Error('Review case not found or unauthorized.');
+        notFoundErr.statusCode = 404;
+        throw notFoundErr;
       }
-    }
 
-    const updated = await updateReviewCase(req.params.id, {
-      status,
-      assignedTo: req.user.id,
-      reviewerNotes,
-      resolutionReason,
-    });
+      // Require resolutionReason when marking case APPROVED or REJECTED
+      if (['APPROVED', 'REJECTED'].includes(status)) {
+        if (!resolutionReason || typeof resolutionReason !== 'string' || !resolutionReason.trim()) {
+          const badReqErr = new Error('A valid resolution reason is required when approving or rejecting a review case.');
+          badReqErr.statusCode = 400;
+          throw badReqErr;
+        }
+      }
 
-    // Synchronize registration status with review case disposition
-    if (status === 'APPROVED') {
-      await updateRegistrationStatus(currentCase.registration_id, 'VERIFIED');
-    } else if (status === 'REJECTED') {
-      await updateRegistrationStatus(currentCase.registration_id, 'REJECTED');
-    } else if (['OPEN', 'IN_REVIEW', 'ESCALATED'].includes(status)) {
-      await updateRegistrationStatus(currentCase.registration_id, 'REVIEW_REQUIRED');
-    }
+      // Concurrency / optimistic locking check if expectedStatus provided
+      if (expectedStatus && currentCase.status !== expectedStatus) {
+        const conflictErr = new Error(`Review case status conflict: current status is '${currentCase.status}' (expected '${expectedStatus}').`);
+        conflictErr.statusCode = 409;
+        conflictErr.code = 'CASE_STATUS_CONFLICT';
+        throw conflictErr;
+      }
 
-    await logEvent({
-      organizationId: currentCase.organization_id,
-      actorId: req.user.id,
-      actorRole: req.user.role,
-      action: `REVIEW_CASE_${status}`,
-      entityType: 'REVIEW_CASE',
-      entityId: req.params.id,
-      eventId: currentCase.event_id,
-      details: {
-        previousStatus: currentCase.status,
-        newStatus: status,
+      // Guard against modifying already resolved cases without administrator privilege
+      const isAlreadyResolved = ['APPROVED', 'REJECTED'].includes(currentCase.status);
+      if (isAlreadyResolved && req.user.role !== 'admin') {
+        const adminErr = new Error(`Case is already resolved as '${currentCase.status}' and cannot be modified by reviewer. Administrator override required.`);
+        adminErr.statusCode = 409;
+        adminErr.code = 'CASE_ALREADY_RESOLVED';
+        throw adminErr;
+      }
+
+      // Optimistic lock condition in SQL
+      const lockStatus = expectedStatus || (req.user.role !== 'admin' ? currentCase.status : null);
+      const updateResult = await updateReviewCase(req.params.id, {
+        status,
+        assignedTo: req.user.id,
         reviewerNotes,
         resolutionReason,
-      },
-      ipAddress: req.ip,
+        expectedStatus: lockStatus,
+      }, txClient);
+
+      if (!updateResult.updated) {
+        const raceErr = new Error(`Review case status conflict: case was modified concurrently.`);
+        raceErr.statusCode = 409;
+        raceErr.code = 'CASE_STATUS_CONFLICT';
+        throw raceErr;
+      }
+
+      // Synchronize registration status with review case disposition in the SAME transaction
+      if (status === 'APPROVED') {
+        await updateRegistrationStatus(currentCase.registration_id, 'VERIFIED', txClient);
+      } else if (status === 'REJECTED') {
+        await updateRegistrationStatus(currentCase.registration_id, 'REJECTED', txClient);
+      } else if (['OPEN', 'IN_REVIEW', 'ESCALATED'].includes(status)) {
+        await updateRegistrationStatus(currentCase.registration_id, 'REVIEW_REQUIRED', txClient);
+      }
+
+      // Log audit event in the SAME transaction
+      await logEvent({
+        organizationId: currentCase.organization_id,
+        actorId: req.user.id,
+        actorRole: req.user.role,
+        action: `REVIEW_CASE_${status}`,
+        entityType: 'REVIEW_CASE',
+        entityId: req.params.id,
+        eventId: currentCase.event_id,
+        details: {
+          previousStatus: currentCase.status,
+          newStatus: status,
+          reviewerNotes,
+          resolutionReason,
+        },
+        ipAddress: req.ip,
+      }, txClient);
+
+      updatedCase = updateResult;
     });
 
-    res.json({ success: true, case: updated });
+    res.json({ success: true, case: updatedCase });
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: err.message,
+        code: err.code,
+      });
+    }
     next(err);
   }
 });

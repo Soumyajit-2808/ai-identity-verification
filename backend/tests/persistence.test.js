@@ -21,6 +21,7 @@ const {
   createVerificationRequest,
   saveVerificationResult,
   saveVerificationSignals,
+  getVerificationHistory,
   getVerificationDetails,
 } = require('../src/db/repositories/verificationRepository');
 const {
@@ -237,6 +238,125 @@ describe('Database & Persistence Layer', () => {
       expect(uniqueIndexNames.some(name => name.includes('idx_uq_event_id_number'))).toBe(true);
       expect(uniqueIndexNames.some(name => name.includes('idx_uq_event_file_hash'))).toBe(true);
     }
+  });
+
+  test('7. Privacy Invariant: Raw ID numbers are never stored in verification_results or exposed via history/details/review APIs', async () => {
+    const rawGovId = 'AADHAAR-SECRET-9876543210';
+    const reg = await createRegistration({
+      eventId: testEvent.id,
+      registrationName: 'Privacy Sensitive User',
+    });
+
+    const vReq = await createVerificationRequest({
+      registrationId: reg.id,
+      eventId: testEvent.id,
+    });
+
+    const vRes = await saveVerificationResult({
+      requestId: vReq.id,
+      registrationId: reg.id,
+      decision: 'REVIEW',
+      confidenceScore: 0.85,
+      riskScore: 0.15,
+      summaryReason: 'Privacy check test.',
+      extractedIdentity: {
+        name: 'Privacy Sensitive User',
+        date_of_birth: '1990-01-01',
+        id_number: rawGovId, // Raw ID passed to saveVerificationResult
+        id_type: 'AADHAAR',
+      },
+    });
+
+    const rCase = await createReviewCase({
+      resultId: vRes.id,
+      registrationId: reg.id,
+      eventId: testEvent.id,
+      priority: 'MEDIUM',
+    });
+
+    // 1. Raw DB row verification
+    const { query } = require('../src/db/connection');
+    const rawDbRow = await query(`SELECT extracted_identity_json FROM verification_results WHERE id = $1`, [vRes.id]);
+    expect(rawDbRow.rows.length).toBe(1);
+    const dbJson = rawDbRow.rows[0].extracted_identity_json;
+    expect(dbJson).not.toContain(rawGovId);
+    expect(JSON.parse(dbJson).id_number).toBeUndefined();
+    expect(JSON.parse(dbJson).id_number_masked).toBeDefined();
+    expect(JSON.parse(dbJson).id_number_masked).not.toBe(rawGovId);
+
+    // 2. getVerificationHistory response
+    const history = await getVerificationHistory({ eventId: testEvent.id });
+    const historyItem = history.find(h => h.result_id === vRes.id);
+    expect(historyItem).toBeDefined();
+    expect(historyItem.extracted_identity_json).toBeUndefined(); // column stripped
+    expect(historyItem.extracted_identity.id_number).toBeUndefined();
+    expect(historyItem.extracted_identity.id_number_masked).toBeDefined();
+    expect(JSON.stringify(historyItem)).not.toContain(rawGovId);
+
+    // 3. getVerificationDetails response
+    const details = await getVerificationDetails(vReq.id);
+    expect(details).toBeDefined();
+    expect(details.extracted_identity_json).toBeUndefined(); // column stripped
+    expect(details.extracted_identity.id_number).toBeUndefined();
+    expect(details.extracted_identity.id_number_masked).toBeDefined();
+    expect(JSON.stringify(details)).not.toContain(rawGovId);
+
+    // 4. getReviewCaseById response
+    const { getReviewCaseById } = require('../src/db/repositories/reviewCaseRepository');
+    const reviewCaseData = await getReviewCaseById(rCase.id);
+    expect(reviewCaseData).toBeDefined();
+    expect(reviewCaseData.extracted_identity_json).toBeUndefined(); // column stripped
+    expect(reviewCaseData.extracted_identity.id_number).toBeUndefined();
+    expect(reviewCaseData.extracted_identity.id_number_masked).toBeDefined();
+    expect(JSON.stringify(reviewCaseData)).not.toContain(rawGovId);
+  });
+
+  test('8. Review Case Atomic Update: Optimistic locking and transactional registration synchronization', async () => {
+    const reg = await createRegistration({
+      eventId: testEvent.id,
+      registrationName: 'Atomic Test User',
+    });
+    const vReq = await createVerificationRequest({
+      registrationId: reg.id,
+      eventId: testEvent.id,
+    });
+    const vRes = await saveVerificationResult({
+      requestId: vReq.id,
+      registrationId: reg.id,
+      decision: 'REVIEW',
+      confidenceScore: 0.70,
+      summaryReason: 'Need manual review.',
+      extractedIdentity: { name: 'Atomic Test User' },
+    });
+    const rCase = await createReviewCase({
+      resultId: vRes.id,
+      registrationId: reg.id,
+      eventId: testEvent.id,
+      priority: 'HIGH',
+    });
+
+    // 1. Optimistic locking: conflicting expectedStatus rejects update
+    const conflictResult = await updateReviewCase(rCase.id, {
+      status: 'APPROVED',
+      resolutionReason: 'Approved override',
+      expectedStatus: 'IN_REVIEW', // Current status is OPEN, not IN_REVIEW
+    });
+    expect(conflictResult.updated).toBe(false);
+    expect(conflictResult.rowCount).toBe(0);
+
+    // Verify status was NOT modified
+    const { getReviewCaseById } = require('../src/db/repositories/reviewCaseRepository');
+    const unchangedCase = await getReviewCaseById(rCase.id);
+    expect(unchangedCase.status).toBe('OPEN');
+
+    // 2. Successful update with matching expectedStatus
+    const successResult = await updateReviewCase(rCase.id, {
+      status: 'APPROVED',
+      resolutionReason: 'Manual operator confirmed documents',
+      expectedStatus: 'OPEN',
+    });
+    expect(successResult.updated).toBe(true);
+    expect(successResult.status).toBe('APPROVED');
   });
 });
 

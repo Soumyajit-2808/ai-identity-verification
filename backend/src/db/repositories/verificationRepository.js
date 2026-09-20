@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const uuidv4 = () => crypto.randomUUID();
 const { query } = require('../connection');
+const { maskIdNumber } = require('./identityRegistryRepository');
 
 async function createVerificationRequest({ registrationId, eventId, requestIp = null, userAgent = null }, dbClient = null) {
   const id = uuidv4();
@@ -31,6 +32,15 @@ async function saveVerificationResult({
   const id = uuidv4();
   const runner = dbClient ? dbClient.query.bind(dbClient) : query;
 
+  // Privacy protection: never persist raw government ID numbers
+  const sanitizedIdentity = { ...(extractedIdentity || {}) };
+  if (sanitizedIdentity.id_number) {
+    if (!sanitizedIdentity.id_number_masked) {
+      sanitizedIdentity.id_number_masked = maskIdNumber(sanitizedIdentity.id_number);
+    }
+    delete sanitizedIdentity.id_number;
+  }
+
   await runner(
     `INSERT INTO verification_results (
        id, request_id, registration_id, decision, confidence_score,
@@ -45,7 +55,7 @@ async function saveVerificationResult({
       riskScore,
       evidenceScore,
       summaryReason,
-      JSON.stringify(extractedIdentity || {}),
+      JSON.stringify(sanitizedIdentity),
     ]
   );
 
@@ -113,10 +123,18 @@ async function getVerificationHistory({ eventId = null, organizationId = null, l
   params.push(limit);
 
   const res = await query(queryText, params);
-  return res.rows.map(row => ({
-    ...row,
-    extracted_identity: JSON.parse(row.extracted_identity_json || '{}'),
-  }));
+  return res.rows.map(row => {
+    const extracted = JSON.parse(row.extracted_identity_json || '{}');
+    if (extracted.id_number) {
+      if (!extracted.id_number_masked) extracted.id_number_masked = maskIdNumber(extracted.id_number);
+      delete extracted.id_number;
+    }
+    const { extracted_identity_json, ...rest } = row;
+    return {
+      ...rest,
+      extracted_identity: extracted,
+    };
+  });
 }
 
 async function getVerificationDetails(requestId, organizationId = null) {
@@ -168,9 +186,16 @@ async function getVerificationDetails(requestId, organizationId = null) {
     [result.registration_id]
   );
 
+  const extracted = JSON.parse(result.extracted_identity_json || '{}');
+  if (extracted.id_number) {
+    if (!extracted.id_number_masked) extracted.id_number_masked = maskIdNumber(extracted.id_number);
+    delete extracted.id_number;
+  }
+  const { extracted_identity_json, ...rest } = result;
+
   return {
-    ...result,
-    extracted_identity: JSON.parse(result.extracted_identity_json || '{}'),
+    ...rest,
+    extracted_identity: extracted,
     signals,
     documents: docsRes.rows,
   };

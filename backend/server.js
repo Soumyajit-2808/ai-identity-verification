@@ -117,38 +117,40 @@ app.get('/', (req, res, next) => {
 
 // 6. Health & Diagnostics
 app.get('/api/health', async (req, res) => {
-  let dbStatus = 'healthy';
+  let dbOk = false;
   try {
     await query('SELECT 1');
-  } catch (err) {
-    dbStatus = `unhealthy: ${err.message}`;
+    dbOk = true;
+  } catch (_) {
+    dbOk = false;
   }
 
-  let aiServiceStatus = 'unreachable';
+  let aiOk = false;
   try {
     const aiCheck = await fetch(`${AI_SERVICE_URL}/health`, { signal: AbortSignal.timeout(3000) });
-    if (aiCheck.ok) {
-      aiServiceStatus = 'healthy';
-    } else {
-      aiServiceStatus = `http_${aiCheck.status}`;
-    }
-  } catch (err) {
-    aiServiceStatus = `unreachable: ${err.message}`;
+    aiOk = aiCheck.ok;
+  } catch (_) {
+    aiOk = false;
   }
 
-  const isHealthy = dbStatus === 'healthy' && aiServiceStatus === 'healthy';
+  const dbStatus = dbOk ? 'healthy' : 'unhealthy';
+  const aiStatus = aiOk ? 'healthy' : 'unhealthy';
+  const isHealthy = dbOk && aiOk;
+
   res.status(isHealthy ? 200 : 503).json({
     status: isHealthy ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
     service: 'identity-verification-backend',
     version: '2.0.0',
     database: {
-      engine: getDbType(),
       status: dbStatus,
     },
     ai_service: {
-      url: AI_SERVICE_URL,
-      status: aiServiceStatus,
+      status: aiStatus,
+    },
+    components: {
+      database: dbStatus,
+      ai_service: aiStatus,
     },
   });
 });
@@ -197,9 +199,11 @@ app.get('/api/metrics', requireAuth, requireRole(['admin', 'reviewer']), async (
       },
     });
   } catch (err) {
+    console.error('[Metrics Error]', err);
     res.status(500).json({
       success: false,
-      error: `Failed to compute metrics: ${err.message}`,
+      error: 'Failed to compute metrics.',
+      code: 'METRICS_ERROR',
     });
   }
 });

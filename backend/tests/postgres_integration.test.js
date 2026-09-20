@@ -461,5 +461,121 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
       clientB.release();
     }
   });
+
+  test('6. Real PostgreSQL Concurrency: Two independent transactions race to resolve the same review case (APPROVED vs REJECTED) with optimistic locking', async () => {
+    const clientA = await pool.connect();
+    const clientB = await pool.connect();
+
+    const regId = crypto.randomUUID();
+    const verifReqId = crypto.randomUUID();
+    const verifResultId = crypto.randomUUID();
+    const reviewCaseId = crypto.randomUUID();
+
+    try {
+      // 1. Setup initial state: registration PENDING, review_case OPEN
+      await pool.query(
+        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, 'Case Contestant', 'PENDING')`,
+        [regId, testEventId]
+      );
+      await pool.query(
+        `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
+        [verifReqId, regId, testEventId]
+      );
+      await pool.query(
+        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
+         VALUES ($1, $2, $3, 'REVIEW', 0.50, 0.50)`,
+        [verifResultId, verifReqId, regId]
+      );
+      await pool.query(
+        `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status)
+         VALUES ($1, $2, $3, $4, 'HIGH', 'OPEN')`,
+        [reviewCaseId, verifResultId, regId, testEventId]
+      );
+
+      // 2. Both transactions start
+      await clientA.query('BEGIN');
+      await clientB.query('BEGIN');
+
+      // Helper for atomic review resolution inside a transaction client
+      const resolveCase = async (client, targetStatus, reviewerNotes, resolutionReason) => {
+        // Optimistic locking update
+        const updRes = await client.query(
+          `UPDATE review_cases
+           SET status = $1, reviewer_notes = $2, resolution_reason = $3, resolved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $4 AND status = 'OPEN'`,
+          [targetStatus, reviewerNotes, resolutionReason, reviewCaseId]
+        );
+
+        if (updRes.rowCount === 0) {
+          // Conflict! Rollback and return conflict
+          await client.query('ROLLBACK');
+          return { success: false, conflict: true };
+        }
+
+        // Synchronize registration status in SAME transaction
+        const regStatus = targetStatus === 'APPROVED' ? 'VERIFIED' : 'REJECTED';
+        await client.query(
+          `UPDATE registrations SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [regStatus, regId]
+        );
+
+        // Write audit log in SAME transaction
+        const auditId = crypto.randomUUID();
+        await client.query(
+          `INSERT INTO audit_logs (id, organization_id, actor_id, actor_role, action, entity_type, entity_id, event_id)
+           VALUES ($1, $2, 'rev-actor', 'reviewer', $3, 'REVIEW_CASE', $4, $5)`,
+          [auditId, testOrgId, 'REVIEW_CASE_' + targetStatus, reviewCaseId, testEventId]
+        );
+
+        await client.query('COMMIT');
+        return { success: true, conflict: false };
+      };
+
+      // 3. Concurrently fire both resolutions
+      const [resA, resB] = await Promise.all([
+        resolveCase(clientA, 'APPROVED', 'Manual operator approved', 'Valid photo ID confirmed'),
+        resolveCase(clientB, 'REJECTED', 'Manual operator rejected', 'Document expired'),
+      ]);
+
+      // Exactly ONE succeeds, the other conflicts
+      const results = [resA, resB];
+      const successCount = results.filter(r => r.success).length;
+      const conflictCount = results.filter(r => r.conflict).length;
+
+      expect(successCount).toBe(1);
+      expect(conflictCount).toBe(1);
+
+      const winningStatus = resA.success ? 'APPROVED' : 'REJECTED';
+      const winningRegStatus = winningStatus === 'APPROVED' ? 'VERIFIED' : 'REJECTED';
+
+      // 4. Assert database consistency
+      // Review case has winning status
+      const caseCheck = await pool.query(
+        `SELECT status, reviewer_notes, resolution_reason FROM review_cases WHERE id = $1`,
+        [reviewCaseId]
+      );
+      expect(caseCheck.rows.length).toBe(1);
+      expect(caseCheck.rows[0].status).toBe(winningStatus);
+
+      // Registration has winning status
+      const regCheck = await pool.query(
+        `SELECT status FROM registrations WHERE id = $1`,
+        [regId]
+      );
+      expect(regCheck.rows.length).toBe(1);
+      expect(regCheck.rows[0].status).toBe(winningRegStatus);
+
+      // Audit logs has exactly ONE resolution log matching winning decision
+      const auditCheck = await pool.query(
+        `SELECT action FROM audit_logs WHERE entity_id = $1`,
+        [reviewCaseId]
+      );
+      expect(auditCheck.rows.length).toBe(1);
+      expect(auditCheck.rows[0].action).toBe('REVIEW_CASE_' + winningStatus);
+    } finally {
+      clientA.release();
+      clientB.release();
+    }
+  });
 });
 

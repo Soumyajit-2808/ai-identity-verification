@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const uuidv4 = () => crypto.randomUUID();
 const { query } = require('../connection');
+const { maskIdNumber } = require('./identityRegistryRepository');
 
 async function createReviewCase({
   resultId,
@@ -74,7 +75,8 @@ async function listReviewCases({ eventId = null, status = null, organizationId =
   return res.rows;
 }
 
-async function getReviewCaseById(id, organizationId = null) {
+async function getReviewCaseById(id, organizationId = null, dbClient = null) {
+  const runner = dbClient ? dbClient.query.bind(dbClient) : query;
   let queryText = `
     SELECT rc.id, rc.result_id, rc.registration_id, rc.event_id, rc.status,
            rc.priority, rc.assigned_to, rc.reviewer_notes, rc.resolution_reason,
@@ -97,13 +99,13 @@ async function getReviewCaseById(id, organizationId = null) {
     params.push(organizationId);
   }
 
-  const res = await query(queryText, params);
+  const res = await runner(queryText, params);
 
   if (res.rows.length === 0) return null;
   const row = res.rows[0];
 
   // Fetch signals
-  const signalsRes = await query(
+  const signalsRes = await runner(
     `SELECT signal_type, status, score, raw_details_json, reason
      FROM verification_signals
      WHERE result_id = $1
@@ -111,18 +113,24 @@ async function getReviewCaseById(id, organizationId = null) {
     [row.result_id]
   );
 
-  // Fetch document metadata
   // Fetch document metadata (safely omit storage_path from API response)
-  const docsRes = await query(
+  const docsRes = await runner(
     `SELECT id, document_type, file_hash, original_filename, mime_type, file_size_bytes, created_at
      FROM identity_documents
      WHERE registration_id = $1`,
     [row.registration_id]
   );
 
+  const extracted = JSON.parse(row.extracted_identity_json || '{}');
+  if (extracted.id_number) {
+    if (!extracted.id_number_masked) extracted.id_number_masked = maskIdNumber(extracted.id_number);
+    delete extracted.id_number;
+  }
+  const { extracted_identity_json, ...rest } = row;
+
   return {
-    ...row,
-    extracted_identity: JSON.parse(row.extracted_identity_json || '{}'),
+    ...rest,
+    extracted_identity: extracted,
     signals: signalsRes.rows.map(s => ({
       signal_type: s.signal_type,
       signalType: s.signal_type,
@@ -135,7 +143,7 @@ async function getReviewCaseById(id, organizationId = null) {
   };
 }
 
-async function updateReviewCase(id, { status, assignedTo, reviewerNotes, resolutionReason }, dbClient = null) {
+async function updateReviewCase(id, { status, assignedTo, reviewerNotes, resolutionReason, expectedStatus }, dbClient = null) {
   const runner = dbClient ? dbClient.query.bind(dbClient) : query;
   const updates = ['updated_at = CURRENT_TIMESTAMP'];
   const params = [id];
@@ -163,12 +171,31 @@ async function updateReviewCase(id, { status, assignedTo, reviewerNotes, resolut
     params.push(resolutionReason);
   }
 
-  await runner(
-    `UPDATE review_cases SET ${updates.join(', ')} WHERE id = $1`,
+  let whereClause = 'WHERE id = $1';
+  if (expectedStatus) {
+    whereClause += ` AND status = $${pIdx++}`;
+    params.push(expectedStatus);
+  }
+
+  const result = await runner(
+    `UPDATE review_cases SET ${updates.join(', ')} ${whereClause}`,
     params
   );
 
-  return getReviewCaseById(id);
+  const rowCount = result && result.rowCount !== undefined
+    ? result.rowCount
+    : (result && result.changes !== undefined ? result.changes : 0);
+
+  if (rowCount === 0) {
+    return { rowCount: 0, updated: false, status: null };
+  }
+
+  const updatedCase = await getReviewCaseById(id, null, dbClient);
+  return {
+    ...updatedCase,
+    rowCount,
+    updated: true,
+  };
 }
 
 module.exports = {
@@ -177,3 +204,4 @@ module.exports = {
   getReviewCaseById,
   updateReviewCase,
 };
+
