@@ -18,6 +18,9 @@ class FaceVerificationResult(BaseModel):
     threshold: float = 0.30
     similarity_score: Optional[float] = None
     liveness_verified: bool = False
+    liveness_performed: bool = False
+    liveness_status: str = "UNSUPPORTED_NOT_PERFORMED"
+    liveness_note: str = "Active 3D liveness detection is unsupported and was not performed. Only 2D biometric facial vector comparison is executed."
     reason: str
     disclaimer: str = (
         "2D facial verification compares facial geometric features between the document photo and selfie. "

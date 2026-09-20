@@ -114,6 +114,7 @@ router.patch(['/review-cases/:id', '/reviews/:id'], requireAuth, requireRole(['r
     }
 
     await logEvent({
+      organizationId: currentCase.organization_id,
       actorId: req.user.id,
       actorRole: req.user.role,
       action: `REVIEW_CASE_${status}`,
@@ -164,11 +165,13 @@ router.get('/documents/:id/file', requireAuth, requireRole(['reviewer', 'admin']
     }
 
     await logEvent({
+      organizationId: doc.organization_id,
       actorId: req.user.id,
       actorRole: req.user.role,
       action: 'DOCUMENT_VIEWED',
       entityType: 'IDENTITY_DOCUMENT',
       entityId: doc.id,
+      eventId: doc.event_id || null,
       details: { documentType: doc.document_type },
       ipAddress: req.ip,
     });

@@ -131,7 +131,7 @@ router.post(
       }
 
       // 4. Check Persistent Duplicate File Hash
-      const duplicateFileCheck = await checkDuplicateFile(event.id, storedDoc.fileHash);
+      let duplicateFileCheck = await checkDuplicateFile(event.id, storedDoc.fileHash);
 
       // 5. Query AI Verification Service
       const formData = new FormData();
@@ -178,7 +178,7 @@ router.post(
       const extractedIdentity = aiVerification.extracted_identity || {};
 
       // 6. Check Persistent Identity Reuse in Database
-      const identityReuseCheck = await checkIdentityReuse(
+      let identityReuseCheck = await checkIdentityReuse(
         event.id,
         extractedIdentity.id_number,
         registrationName
@@ -268,7 +268,7 @@ router.post(
       finalConfidence = Math.round(finalConfidence * 100) / 100;
 
       // Construct explainable summary
-      const finalSummaryReason = finalDecision === 'REVIEW'
+      let finalSummaryReason = finalDecision === 'REVIEW'
         ? `Manual review is required: ${summaryReasons.join('; ')}.`
         : aiVerification.summary_reason;
 
@@ -290,6 +290,7 @@ router.post(
         await saveDocumentRecord(
           {
             registrationId: registration.id,
+            eventId: event.id,
             documentType: 'IDENTITY_DOCUMENT',
             fileHash: storedDoc.fileHash,
             storagePath: storedDoc.storagePath,
@@ -304,6 +305,7 @@ router.post(
           await saveDocumentRecord(
             {
               registrationId: registration.id,
+              eventId: event.id,
               documentType: 'SELFIE',
               fileHash: storedSelfie.fileHash,
               storagePath: storedSelfie.storagePath,
@@ -326,7 +328,7 @@ router.post(
           txClient
         );
 
-        // Re-check exact duplicate file inside transaction to eliminate race conditions
+        // 1. Re-check exact duplicate file inside transaction to eliminate race conditions
         if (!duplicateFileCheck.isDuplicate) {
           const inTxDupCheck = await checkDuplicateFile(event.id, storedDoc.fileHash, txClient);
           if (inTxDupCheck.isDuplicate) {
@@ -335,7 +337,9 @@ router.post(
               finalDecision = 'REVIEW';
             }
             finalRisk = Math.min(1.0, finalRisk + 0.35);
-            finalSummaryReason = (finalSummaryReason + '; document file was previously submitted (concurrency detected)').trim();
+            finalConfidence = Math.max(0.10, Math.min(0.98, aiVerification.evidence_score * (1.0 - (finalRisk * 0.7))));
+            finalConfidence = Math.round(finalConfidence * 100) / 100;
+            finalSummaryReason = (finalSummaryReason.includes('Manual review') ? finalSummaryReason : `Manual review is required: ${finalSummaryReason}`) + '; document file was previously submitted (concurrency detected)';
             const dupIdx = signals.findIndex(s => s.signal_type === 'DUPLICATE_FILE' || s.signalType === 'DUPLICATE_FILE');
             const dupSignal = {
               signal_type: 'DUPLICATE_FILE',
@@ -350,7 +354,84 @@ router.post(
           }
         }
 
-        // Save verification result
+        // 2. Re-check identity reuse inside transaction to eliminate check-then-write race
+        if (extractedIdentity.id_number && !identityReuseCheck.isReused) {
+          const inTxReuseCheck = await checkIdentityReuse(
+            event.id,
+            extractedIdentity.id_number,
+            registrationName,
+            txClient
+          );
+          if (inTxReuseCheck.isReused) {
+            identityReuseCheck = inTxReuseCheck;
+            if (!inTxReuseCheck.isSamePersonResubmission) {
+              if (finalDecision !== 'INELIGIBLE') {
+                finalDecision = 'REVIEW';
+              }
+              finalRisk = Math.min(1.0, finalRisk + 0.40);
+              finalConfidence = Math.max(0.10, Math.min(0.98, aiVerification.evidence_score * (1.0 - (finalRisk * 0.7))));
+              finalConfidence = Math.round(finalConfidence * 100) / 100;
+              finalSummaryReason = (finalSummaryReason.includes('Manual review') ? finalSummaryReason : `Manual review is required: ${finalSummaryReason}`) + '; ID number reuse detected with conflicting participant name (concurrency detected)';
+              const reuseIdx = signals.findIndex(s => s.signal_type === 'IDENTITY_REUSE' || s.signalType === 'IDENTITY_REUSE');
+              const reuseSignal = {
+                signal_type: 'IDENTITY_REUSE',
+                signalType: 'IDENTITY_REUSE',
+                status: 'REVIEW',
+                score: 0.0,
+                reason: `Extracted ID number was previously registered under a different name ('${inTxReuseCheck.previousName}').`,
+                details: { previousName: inTxReuseCheck.previousName },
+              };
+              if (reuseIdx >= 0) signals[reuseIdx] = reuseSignal;
+              else signals.push(reuseSignal);
+            }
+          }
+        }
+
+        // 3. Register in deduplication registry with authoritative DB unique constraints
+        if (!duplicateFileCheck.isDuplicate && (!identityReuseCheck.isReused || identityReuseCheck.isSamePersonResubmission)) {
+          const regResult = await registerIdentity(
+            {
+              eventId: event.id,
+              registrationId: registration.id,
+              rawIdNumber: extractedIdentity.id_number,
+              idType: extractedIdentity.id_type,
+              registeredName: registrationName,
+              documentFileHash: storedDoc.fileHash,
+            },
+            txClient
+          );
+
+          if (!regResult.registered && regResult.conflict) {
+            // Concurrent race condition prevented by database unique constraint
+            if (!regResult.isSamePersonResubmission) {
+              if (finalDecision !== 'INELIGIBLE') {
+                finalDecision = 'REVIEW';
+              }
+              const conflictSignalType = regResult.conflictType === 'DUPLICATE_FILE' ? 'DUPLICATE_FILE' : 'IDENTITY_REUSE';
+              const riskInc = conflictSignalType === 'DUPLICATE_FILE' ? 0.35 : 0.40;
+              finalRisk = Math.min(1.0, finalRisk + riskInc);
+              finalConfidence = Math.max(0.10, Math.min(0.98, aiVerification.evidence_score * (1.0 - (finalRisk * 0.7))));
+              finalConfidence = Math.round(finalConfidence * 100) / 100;
+              finalSummaryReason = (finalSummaryReason.includes('Manual review') ? finalSummaryReason : `Manual review is required: ${finalSummaryReason}`) + `; ${conflictSignalType.toLowerCase().replace('_', ' ')} prevented by database constraint`;
+
+              const sigIdx = signals.findIndex(s => s.signal_type === conflictSignalType || s.signalType === conflictSignalType);
+              const conflictSig = {
+                signal_type: conflictSignalType,
+                signalType: conflictSignalType,
+                status: 'REVIEW',
+                score: 0.0,
+                reason: conflictSignalType === 'DUPLICATE_FILE'
+                  ? 'Exact document file hash matches an existing submission (enforced by database constraint).'
+                  : `Extracted ID number was previously registered under a different name ('${regResult.existingRecord?.registered_name || 'conflicting identity'}') (enforced by database constraint).`,
+                details: { existingRecord: regResult.existingRecord },
+              };
+              if (sigIdx >= 0) signals[sigIdx] = conflictSig;
+              else signals.push(conflictSig);
+            }
+          }
+        }
+
+        // 4. Save verification result with final, derived decision and scores
         const verifResult = await saveVerificationResult(
           {
             requestId: verifReq.id,
@@ -365,48 +446,20 @@ router.post(
           txClient
         );
 
-        // Save atomic signals
+        // 5. Save atomic signals reflecting final state
         await saveVerificationSignals(verifResult.id, signals, txClient);
 
-        // Register in deduplication registry
-        if (!duplicateFileCheck.isDuplicate && (!identityReuseCheck.isReused || identityReuseCheck.isSamePersonResubmission)) {
-          try {
-            await registerIdentity(
-              {
-                eventId: event.id,
-                registrationId: registration.id,
-                rawIdNumber: extractedIdentity.id_number,
-                idType: extractedIdentity.id_type,
-                registeredName: registrationName,
-                documentFileHash: storedDoc.fileHash,
-              },
-              txClient
-            );
-          } catch (regErr) {
-            if (isUniqueConstraintViolation(regErr)) {
-              // Concurrent race condition prevented by unique constraint
-              console.warn('[Identity Registry Concurrency Lock]', {
-                eventId: event.id,
-                message: regErr.message,
-              });
-            } else {
-              // Unexpected database error MUST propagate to abort transaction and return 500
-              throw regErr;
-            }
-          }
-        }
-
-        // Update registration status
+        // 6. Update registration status
         let regStatus = 'PENDING';
         if (finalDecision === 'ELIGIBLE') regStatus = 'VERIFIED';
         else if (finalDecision === 'REVIEW') regStatus = 'REVIEW_REQUIRED';
         else if (finalDecision === 'INELIGIBLE') regStatus = 'REJECTED';
         await updateRegistrationStatus(registration.id, regStatus, txClient);
 
-        // Create review case if review is required
+        // 7. Create review case if review is required
         let reviewCaseId = null;
         if (finalDecision === 'REVIEW') {
-          const priority = (finalRisk >= 0.50 || identityReuseCheck.isReused) ? 'HIGH' : 'MEDIUM';
+          const priority = (finalRisk >= 0.50 || identityReuseCheck.isReused || duplicateFileCheck.isDuplicate) ? 'HIGH' : 'MEDIUM';
           const rCase = await createReviewCase(
             {
               resultId: verifResult.id,
@@ -420,9 +473,10 @@ router.post(
           reviewCaseId = rCase.id;
         }
 
-        // Audit log
+        // 8. Audit log with authoritative organization ID
         await logEvent(
           {
+            organizationId: event.organization_id,
             action: 'VERIFICATION_EXECUTED',
             entityType: 'VERIFICATION_REQUEST',
             entityId: verifReq.id,

@@ -9,6 +9,7 @@ const { query } = require('../connection');
 
 async function saveDocumentRecord({
   registrationId,
+  eventId = null,
   documentType,
   fileHash,
   storagePath,
@@ -20,12 +21,13 @@ async function saveDocumentRecord({
   const runner = dbClient ? dbClient.query.bind(dbClient) : query;
   await runner(
     `INSERT INTO identity_documents (
-       id, registration_id, document_type, file_hash, storage_path,
+       id, registration_id, event_id, document_type, file_hash, storage_path,
        original_filename, mime_type, file_size_bytes
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       id,
       registrationId,
+      eventId,
       documentType,
       fileHash,
       storagePath,
@@ -34,7 +36,7 @@ async function saveDocumentRecord({
       fileSizeBytes,
     ]
   );
-  return { id, registrationId, documentType, fileHash, storagePath };
+  return { id, registrationId, eventId, documentType, fileHash, storagePath };
 }
 
 async function getDocumentsByRegistrationId(registrationId) {

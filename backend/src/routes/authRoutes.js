@@ -43,6 +43,7 @@ router.post('/login', async (req, res, next) => {
     const token = generateToken(user);
 
     await logEvent({
+      organizationId: user.organization_id,
       actorId: user.id,
       actorRole: user.role,
       action: 'USER_LOGIN',

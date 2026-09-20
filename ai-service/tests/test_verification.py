@@ -182,6 +182,30 @@ def test_name_matching_engine():
     res_strict = match_names("Rahul Kumar Sharma", "Rahul Sharma", strict=True)
     assert res_strict.matched is False, "Strict mode must reject subset match"
 
+    # Adversarial: "Amit Kumar" vs "Amit Kumari" - distinct gendered names, must NOT match!
+    res_kumar_kumari = match_names("Amit Kumar", "Amit Kumari")
+    assert res_kumar_kumari.matched is False, "Amit Kumar vs Amit Kumari must not match (distinct names)"
+
+    # Adversarial: "A Sharma" vs "Amit Sharma" - initial expansion match
+    res_a_sharma = match_names("A Sharma", "Amit Sharma")
+    assert res_a_sharma.matched is True, "A Sharma vs Amit Sharma should match via initial expansion"
+
+    # Adversarial: "Sharma Rahul" vs "Rahul Sharma" - reordered match
+    res_reorder = match_names("Sharma Rahul", "Rahul Sharma")
+    assert res_reorder.matched is True, "Sharma Rahul vs Rahul Sharma should match via token reorder"
+
+    # Adversarial: "Rahul Dev Sharma" vs "Rahul Sharma" - middle name expansion match
+    res_dev = match_names("Rahul Dev Sharma", "Rahul Sharma")
+    assert res_dev.matched is True, "Rahul Dev Sharma vs Rahul Sharma should match via middle name expansion"
+
+    # Adversarial: "R K Sharma" vs "Rahul Kumar Sharma" - multi-initial match
+    res_rk = match_names("R K Sharma", "Rahul Kumar Sharma")
+    assert res_rk.matched is True, "R K Sharma vs Rahul Kumar Sharma should match"
+
+    # Adversarial: completely unrelated names
+    assert match_names("John Doe", "Jane Smith").matched is False
+    assert match_names("Vikram Patel", "Suresh Kumar").matched is False
+
     # OCR typo that SHOULD match: "Rahui Sharma" vs "Rahul Sharma" (1-char typo)
     res_typo = match_names("Rahui Sharma", "Rahul Sharma")
     assert res_typo.matched is True, "Minor OCR typo Rahui vs Rahul should match"

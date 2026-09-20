@@ -95,3 +95,27 @@ jobs:
           context: ./ai-service
           push: false
           tags: verifyid-ai-service:test
+
+      - name: Docker Compose Runtime Smoke Test
+        env:
+          POSTGRES_PASSWORD: ci_test_password_123
+          JWT_SECRET: ci_test_jwt_secret_key_32bytes_long_here
+          PII_SALT: ci_test_pii_salt_cryptographic_secret
+        run: |
+          docker compose up -d --build
+          echo "Waiting for services to become healthy..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8001/health | grep -q "healthy" && \
+               curl -s http://localhost:3000/api/health | grep -q "true"; then
+              echo "Services are healthy!"
+              break
+            fi
+            sleep 2
+          done
+          # Verify AI health
+          curl -f http://localhost:8001/health
+          # Verify Backend health & connectivity
+          curl -f http://localhost:3000/api/health
+          # Verify Frontend is served
+          curl -f -s http://localhost:3000/ | grep -i "Identity Verification"
+          docker compose down -v

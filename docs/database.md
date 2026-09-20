@@ -48,6 +48,7 @@ Participant registration records.
 Metadata for securely stored documents.
 - `id` (TEXT, PK)
 - `registration_id` (TEXT, FK $\to$ `registrations.id`)
+- `event_id` (TEXT, FK $\to$ `events.id`)
 - `document_type` (`IDENTITY_DOCUMENT`, `SELFIE`)
 - `file_hash` (TEXT, SHA-256)
 - `storage_path` (TEXT)
@@ -86,7 +87,7 @@ Final verification outcome.
 Normalized atomic evidence signals.
 - `id` (TEXT, PK)
 - `result_id` (TEXT, FK $\to$ `verification_results.id`)
-- `signal_type` (`OCR`, `QUALITY`, `TAMPER`, `DUPLICATE_FILE`, `IDENTITY_REUSE`, `NAME_MATCH`, `ELIGIBILITY`, `FACE_MATCH`)
+- `signal_type` (`OCR`, `QUALITY`, `TAMPER`, `DUPLICATE_FILE`, `IDENTITY_REUSE`, `NAME_MATCH`, `ELIGIBILITY`, `FACE_MATCH`, `DOCUMENT_TYPE`)
 - `status` (`PASSED`, `REVIEW`, `FAILED`, `SKIPPED`)
 - `score` (REAL), `raw_details_json` (TEXT), `reason` (TEXT)
 
@@ -104,6 +105,7 @@ Operator review workflow tracking.
 ### 10. `audit_logs`
 Append-only log of security and administrative operations.
 - `id` (TEXT, PK)
+- `organization_id` (TEXT, FK $\to$ `organizations.id`)
 - `actor_id` (TEXT), `actor_role` (TEXT), `action` (TEXT)
 - `entity_type` (TEXT), `entity_id` (TEXT), `details_json` (TEXT), `created_at` (TIMESTAMP)
 

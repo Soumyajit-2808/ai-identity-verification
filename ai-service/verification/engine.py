@@ -203,7 +203,10 @@ def evaluate_verification(
             "state": face_res.state,
             "distance": face_res.distance,
             "threshold": face_res.threshold,
-            "liveness_verified": face_res.liveness_verified,
+            "liveness_verified": False,
+            "liveness_performed": False,
+            "liveness_status": "UNSUPPORTED_NOT_PERFORMED",
+            "liveness_note": "Active 3D liveness detection is unsupported and was not performed. Only 2D biometric facial vector comparison is executed.",
         }
     ))
 

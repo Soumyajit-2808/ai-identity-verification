@@ -120,6 +120,7 @@ router.patch('/:id', requireAuth, requireRole(['admin', 'organizer']), async (re
     }
 
     await logEvent({
+      organizationId: existing.organization_id || req.user.organization_id,
       actorId: req.user.id,
       actorRole: req.user.role,
       action: 'EVENT_POLICY_UPDATED',

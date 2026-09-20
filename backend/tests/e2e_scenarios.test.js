@@ -26,6 +26,7 @@ const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 describe('E2E Verification Scenarios', () => {
   let adminToken;
   let reviewerToken;
+  let originalFetch;
 
   beforeAll(async () => {
     await runMigrations();
@@ -41,9 +42,156 @@ describe('E2E Verification Scenarios', () => {
       .post('/api/auth/login')
       .send({ email: 'admin@verifyid.local', password: 'Admin@12345' });
     adminToken = adminLogin.body.token;
+
+    originalFetch = global.fetch;
+    global.fetch = async (url, options) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/verify')) {
+        let regName = '';
+        if (options && options.body && typeof options.body.get === 'function') {
+          regName = options.body.get('registration_name') || '';
+        }
+
+        // Scenario 3: Name mismatch
+        if (regName === 'Completely Different Name') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              verification: {
+                decision: 'REVIEW',
+                confidence_score: 0.55,
+                risk_score: 0.65,
+                evidence_score: 0.55,
+                summary_reason: 'Registration name does not match document name.',
+                extracted_identity: {
+                  name: 'Rahul Sharma',
+                  date_of_birth: '1995-05-15',
+                  calculated_age: 30,
+                  id_number: 'TEST-ID-DIFF-001',
+                  id_type: 'PASSPORT',
+                  institution: null,
+                },
+                signals: [
+                  { signal_type: 'OCR', status: 'PASSED', score: 0.95, reason: 'Text extracted.' },
+                  { signal_type: 'FACE_MATCH', status: 'PASSED', score: 0.90, reason: 'Face detected.' },
+                  { signal_type: 'QUALITY', status: 'PASSED', score: 0.90, reason: 'Good quality.' },
+                  { signal_type: 'DOCUMENT_TYPE', status: 'PASSED', score: 0.90, reason: 'Valid format.' },
+                  { signal_type: 'ELIGIBILITY', status: 'PASSED', score: 1.0, reason: 'Age eligible.' },
+                  { signal_type: 'NAME_MATCH', status: 'REVIEW', score: 0.30, reason: 'Name mismatch.' },
+                ],
+              },
+            }),
+          };
+        }
+
+        // Scenario 4: Minor
+        if (regName === 'Aarav Gupta') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              verification: {
+                decision: 'INELIGIBLE',
+                confidence_score: 0.90,
+                risk_score: 0.85,
+                evidence_score: 0.30,
+                summary_reason: 'Participant does not meet minimum age requirement.',
+                extracted_identity: {
+                  name: 'Aarav Gupta',
+                  date_of_birth: '2012-08-10',
+                  calculated_age: 13,
+                  id_number: 'TEST-ID-MINOR-002',
+                  id_type: 'STUDENT_ID',
+                  institution: null,
+                },
+                signals: [
+                  { signal_type: 'OCR', status: 'PASSED', score: 0.90, reason: 'Text extracted.' },
+                  { signal_type: 'FACE_MATCH', status: 'PASSED', score: 0.90, reason: 'Face detected.' },
+                  { signal_type: 'QUALITY', status: 'PASSED', score: 0.90, reason: 'Good quality.' },
+                  { signal_type: 'DOCUMENT_TYPE', status: 'PASSED', score: 0.90, reason: 'Valid format.' },
+                  { signal_type: 'ELIGIBILITY', status: 'FAILED', score: 0.0, reason: 'Underage.' },
+                  { signal_type: 'NAME_MATCH', status: 'PASSED', score: 1.0, reason: 'Name matched.' },
+                ],
+              },
+            }),
+          };
+        }
+
+        // Scenario 5: Blurry
+        if (regName === 'Blurry Applicant') {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              verification: {
+                decision: 'REVIEW',
+                confidence_score: 0.45,
+                risk_score: 0.70,
+                evidence_score: 0.40,
+                summary_reason: 'Document image quality is too low or blurry.',
+                extracted_identity: {
+                  name: 'Blurry Applicant',
+                  date_of_birth: '1990-01-01',
+                  calculated_age: 35,
+                  id_number: 'TEST-ID-BLUR-003',
+                  id_type: 'NATIONAL_ID',
+                  institution: null,
+                },
+                signals: [
+                  { signal_type: 'OCR', status: 'REVIEW', score: 0.45, reason: 'Low OCR confidence.' },
+                  { signal_type: 'FACE_MATCH', status: 'PASSED', score: 0.80, reason: 'Face detected.' },
+                  { signal_type: 'QUALITY', status: 'REVIEW', score: 0.35, reason: 'Low Laplacian sharpness.' },
+                  { signal_type: 'DOCUMENT_TYPE', status: 'PASSED', score: 0.80, reason: 'Valid format.' },
+                  { signal_type: 'ELIGIBILITY', status: 'PASSED', score: 1.0, reason: 'Age eligible.' },
+                  { signal_type: 'NAME_MATCH', status: 'PASSED', score: 0.90, reason: 'Name matched.' },
+                ],
+              },
+            }),
+          };
+        }
+
+        // Default: valid verification
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            verification: {
+              decision: 'ELIGIBLE',
+              confidence_score: 0.94,
+              risk_score: 0.06,
+              evidence_score: 0.94,
+              summary_reason: 'Automated verification checks passed.',
+              extracted_identity: {
+                name: regName || 'Rahul Sharma',
+                date_of_birth: '1995-05-15',
+                calculated_age: 30,
+                id_number: 'TEST-ID-VALID-001',
+                id_type: 'NATIONAL_ID',
+                institution: null,
+              },
+              signals: [
+                { signal_type: 'OCR', status: 'PASSED', score: 0.96, reason: 'OCR successful.' },
+                { signal_type: 'FACE_MATCH', status: 'PASSED', score: 0.92, reason: 'Face detected.' },
+                { signal_type: 'QUALITY', status: 'PASSED', score: 0.95, reason: 'High quality.' },
+                { signal_type: 'DOCUMENT_TYPE', status: 'PASSED', score: 0.95, reason: 'Valid format.' },
+                { signal_type: 'ELIGIBILITY', status: 'PASSED', score: 1.0, reason: 'Age eligible.' },
+                { signal_type: 'NAME_MATCH', status: 'PASSED', score: 0.98, reason: 'Name matched.' },
+              ],
+            },
+          }),
+        };
+      }
+      return originalFetch(url, options);
+    };
   });
 
   afterAll(async () => {
+    if (originalFetch) global.fetch = originalFetch;
     await closeDb();
   });
 

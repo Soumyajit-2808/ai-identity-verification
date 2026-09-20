@@ -21,6 +21,18 @@ class NameMatchResult(BaseModel):
 HONORIFICS = {"MR", "MS", "MRS", "DR", "PROF", "SHRI", "SMT", "MD"}
 
 
+DISTINCT_NAME_PAIRS = {
+    ("KUMAR", "KUMARI"),
+    ("KUMARI", "KUMAR"),
+    ("SINGH", "KAUR"),
+    ("KAUR", "SINGH"),
+    ("DEVI", "DEVA"),
+    ("DEVA", "DEVI"),
+    ("RAM", "RAMA"),
+    ("RAMA", "RAM"),
+}
+
+
 def clean_name_tokens(name: str) -> List[str]:
     if not name:
         return []
@@ -257,10 +269,13 @@ def match_names(
         for tok1, tok2 in zip(t1, t2):
             if tok1 == tok2:
                 token_scores.append(1.0)
+            elif (tok1, tok2) in DISTINCT_NAME_PAIRS or (tok2, tok1) in DISTINCT_NAME_PAIRS:
+                has_severe_mismatch = True
+                token_scores.append(0.30)
             else:
                 lev = levenshtein_distance(tok1, tok2)
                 jw = jaro_winkler_similarity(tok1, tok2)
-                # If a token differs significantly (> 1 edit for short names or jw < 0.80),
+                # If a token differs significantly (> 1 edit for short names or jw < 0.82),
                 # it represents a completely different name (e.g. Kumar vs Sharma, Amit vs Rahul)
                 if lev > 1 and jw < 0.82:
                     has_severe_mismatch = True

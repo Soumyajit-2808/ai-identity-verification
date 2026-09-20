@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS events (
     description TEXT,
     min_age INTEGER NOT NULL DEFAULT 18,
     max_age INTEGER NOT NULL DEFAULT 100,
-    allowed_id_types TEXT NOT NULL DEFAULT '["AADHAAR","PAN","PASSPORT","DRIVING_LICENSE","VOTER_ID","STUDENT_ID"]',
+    allowed_id_types TEXT NOT NULL DEFAULT '["AADHAAR","PAN","PASSPORT","DRIVING_LICENSE","VOTER_ID","STUDENT_ID","NATIONAL_ID"]',
     require_selfie INTEGER NOT NULL DEFAULT 0,
     strict_name_matching INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER DEFAULT 1,
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS registrations (
 CREATE TABLE IF NOT EXISTS identity_documents (
     id TEXT PRIMARY KEY,
     registration_id TEXT REFERENCES registrations(id) ON DELETE CASCADE,
+    event_id TEXT REFERENCES events(id) ON DELETE CASCADE,
     document_type TEXT NOT NULL CHECK (document_type IN ('IDENTITY_DOCUMENT', 'SELFIE')),
     file_hash TEXT NOT NULL,
     storage_path TEXT NOT NULL,
@@ -140,6 +141,7 @@ CREATE TABLE IF NOT EXISTS review_cases (
 -- 11. Immutable Audit Trail
 CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
+    organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
     actor_id TEXT,
     actor_role TEXT,
     action TEXT NOT NULL,
@@ -154,11 +156,13 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- Indexes for high-frequency queries and deduplication lookups
 CREATE INDEX IF NOT EXISTS idx_reg_event ON registrations(event_id);
 CREATE INDEX IF NOT EXISTS idx_doc_hash ON identity_documents(file_hash);
-CREATE INDEX IF NOT EXISTS idx_registry_event_hash ON identity_registry(event_id, id_number_hash);
+CREATE INDEX IF NOT EXISTS idx_doc_event_hash ON identity_documents(event_id, file_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_event_id_number ON identity_registry(event_id, id_number_hash);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_event_file_hash ON identity_registry(event_id, document_file_hash);
 CREATE INDEX IF NOT EXISTS idx_verif_reg ON verification_requests(registration_id);
 CREATE INDEX IF NOT EXISTS idx_signals_result ON verification_signals(result_id);
 CREATE INDEX IF NOT EXISTS idx_cases_status ON review_cases(status);
 CREATE INDEX IF NOT EXISTS idx_cases_event ON review_cases(event_id);
+CREATE INDEX IF NOT EXISTS idx_audit_org ON audit_logs(organization_id);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);

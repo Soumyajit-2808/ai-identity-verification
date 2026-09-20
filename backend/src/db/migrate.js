@@ -43,7 +43,8 @@ async function runMigrations() {
     .filter(line => !line.trim().startsWith('--'))
     .join('\n');
 
-  const { exec, query, isPostgres } = require('./connection');
+  const { exec, query, getDbType } = require('./connection');
+  const isPostgres = getDbType() === 'postgres';
 
   // If table already exists with legacy duplicate file hashes, deduplicate before applying unique index
   try {
@@ -68,6 +69,33 @@ async function runMigrations() {
   }
 
   await exec(cleanSql);
+
+  // Incremental migrations for existing installations where tables already existed
+  try {
+    const auditColsRes = isPostgres
+      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'organization_id'`)
+      : await query(`PRAGMA table_info(audit_logs)`);
+    const hasOrgCol = isPostgres
+      ? auditColsRes.rows.length > 0
+      : auditColsRes.rows.some(r => r.name === 'organization_id');
+    if (!hasOrgCol) {
+      await query(`ALTER TABLE audit_logs ADD COLUMN organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE`);
+      console.log('[Migration] Added missing organization_id column to audit_logs.');
+    }
+  } catch (_auditColErr) {}
+
+  try {
+    const docColsRes = isPostgres
+      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'identity_documents' AND column_name = 'event_id'`)
+      : await query(`PRAGMA table_info(identity_documents)`);
+    const hasEventCol = isPostgres
+      ? docColsRes.rows.length > 0
+      : docColsRes.rows.some(r => r.name === 'event_id');
+    if (!hasEventCol) {
+      await query(`ALTER TABLE identity_documents ADD COLUMN event_id TEXT REFERENCES events(id) ON DELETE CASCADE`);
+      console.log('[Migration] Added missing event_id column to identity_documents.');
+    }
+  } catch (_docColErr) {}
 
   console.log('[Migration] Schema tables and indexes verified successfully.');
 
@@ -106,7 +134,7 @@ async function seedDefaults() {
         'Annual Flagship AI & Emerging Tech Hackathon. Requires 18+ age eligibility and valid photo ID.',
         18,
         100,
-        JSON.stringify(['AADHAAR', 'PAN', 'PASSPORT', 'DRIVING_LICENSE', 'VOTER_ID', 'STUDENT_ID']),
+        JSON.stringify(['AADHAAR', 'PAN', 'PASSPORT', 'DRIVING_LICENSE', 'VOTER_ID', 'STUDENT_ID', 'NATIONAL_ID']),
         0, // Optional selfie by default
         0  // Standard fuzzy name matching
       ]

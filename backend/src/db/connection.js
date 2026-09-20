@@ -10,6 +10,7 @@ const path = require('path');
 let pool = null;
 let sqliteDb = null;
 let dbType = 'sqlite'; // 'postgres' or 'sqlite'
+let sqliteTxQueue = Promise.resolve();
 
 function getDatabaseConfig() {
   const databaseUrl = process.env.DATABASE_URL || '';
@@ -132,9 +133,16 @@ async function transaction(callback) {
     }
   }
 
-  // SQLite transaction
-  sqliteDb.exec('BEGIN TRANSACTION');
+  // SQLite transaction serialization across the single connection
+  const prevLock = sqliteTxQueue;
+  let releaseLock;
+  sqliteTxQueue = new Promise((resolve) => {
+    releaseLock = resolve;
+  });
+
+  await prevLock;
   try {
+    sqliteDb.exec('BEGIN TRANSACTION');
     const txWrapper = {
       query: async (text, params) => query(text, params),
     };
@@ -142,8 +150,12 @@ async function transaction(callback) {
     sqliteDb.exec('COMMIT');
     return result;
   } catch (err) {
-    sqliteDb.exec('ROLLBACK');
+    try {
+      sqliteDb.exec('ROLLBACK');
+    } catch (_) {}
     throw err;
+  } finally {
+    releaseLock();
   }
 }
 

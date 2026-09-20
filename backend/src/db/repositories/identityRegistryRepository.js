@@ -123,7 +123,11 @@ function isUniqueConstraintViolation(err) {
 
 /**
  * Persist identity to the registry inside an atomic transaction.
- * Concurrency-safe: handles same-person resubmission while enforcing database uniqueness.
+ * Concurrency-safe: enforces database uniqueness without destructive overwrites.
+ * - First registration creates the registry entry.
+ * - Conflicting registrations (same ID different person or duplicate file) are rejected by unique constraints.
+ * - Original registry record is NEVER overwritten.
+ * - Unexpected database failures propagate to abort the transaction.
  */
 async function registerIdentity({
   eventId,
@@ -138,30 +142,67 @@ async function registerIdentity({
   const maskedId = maskIdNumber(rawIdNumber);
   const id = uuidv4();
 
-  const res = await runner(
-    `INSERT INTO identity_registry (
-       id, event_id, registration_id, id_number_hash, id_number_masked,
-       id_type, registered_name, document_file_hash
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     ON CONFLICT (event_id, id_number_hash) DO UPDATE SET
-       registration_id = excluded.registration_id,
-       document_file_hash = excluded.document_file_hash,
-       registered_name = excluded.registered_name
-     RETURNING id`,
-    [
-      id,
-      eventId,
-      registrationId,
-      idHash,
-      maskedId,
-      idType || 'UNKNOWN',
-      registeredName,
-      documentFileHash,
-    ]
-  );
+  try {
+    const res = await runner(
+      `INSERT INTO identity_registry (
+         id, event_id, registration_id, id_number_hash, id_number_masked,
+         id_type, registered_name, document_file_hash
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id`,
+      [
+        id,
+        eventId,
+        registrationId,
+        idHash,
+        maskedId,
+        idType || 'UNKNOWN',
+        registeredName,
+        documentFileHash,
+      ]
+    );
 
-  const persistedId = (res && res.rows && res.rows[0] && res.rows[0].id) ? res.rows[0].id : id;
-  return { id: persistedId, idNumberHash: idHash, idNumberMasked: maskedId };
+    const persistedId = (res && res.rows && res.rows[0] && res.rows[0].id) ? res.rows[0].id : id;
+    return {
+      registered: true,
+      conflict: false,
+      id: persistedId,
+      idNumberHash: idHash,
+      idNumberMasked: maskedId,
+    };
+  } catch (err) {
+    if (isUniqueConstraintViolation(err)) {
+      // Database unique constraint triggered! Either id_number_hash or document_file_hash exists.
+      // Fetch authoritative existing row to determine exact nature of conflict without mutating it.
+      const conflictRes = await runner(
+        `SELECT ir.id, ir.registration_id, ir.registered_name, ir.id_number_hash,
+                ir.document_file_hash, ir.id_type, ir.created_at
+         FROM identity_registry ir
+         WHERE ir.event_id = $1 AND (ir.id_number_hash = $2 OR ir.document_file_hash = $3)
+         LIMIT 1`,
+        [eventId, idHash, documentFileHash]
+      );
+
+      const existingRecord = conflictRes.rows && conflictRes.rows[0] ? conflictRes.rows[0] : null;
+      const isSameDoc = existingRecord && existingRecord.document_file_hash === documentFileHash;
+      const isSameId = existingRecord && existingRecord.id_number_hash === idHash;
+      const prevName = (existingRecord?.registered_name || '').toUpperCase().trim();
+      const currName = (registeredName || '').toUpperCase().trim();
+      const isSamePerson = prevName === currName;
+
+      return {
+        registered: false,
+        conflict: true,
+        conflictType: isSameDoc ? 'DUPLICATE_FILE' : 'IDENTITY_REUSE',
+        isSamePersonResubmission: isSameId && isSamePerson && !isSameDoc,
+        idNumberHash: idHash,
+        idNumberMasked: maskedId,
+        existingRecord,
+      };
+    }
+
+    // Unexpected database failure MUST propagate to abort transaction
+    throw err;
+  }
 }
 
 module.exports = {

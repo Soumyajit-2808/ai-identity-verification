@@ -10,6 +10,14 @@ This document provides complete documentation for the AI Identity Verification P
 - **Supported Media Formats**: `JPEG`, `PNG`, `WebP` (Max 12MB). PDF documents are explicitly **not supported**.
 - **Request Tracing**: Clients may supply an `X-Request-Id` header (UUIDv4). If omitted, the gateway generates one automatically and echoes it back in every response header.
 - **Canonical ID Types**: `['PASSPORT', 'DRIVING_LICENSE', 'STUDENT_ID', 'NATIONAL_ID', 'AADHAAR', 'PAN', 'VOTER_ID']`.
+- **Response Compatibility Aliases**: The verification endpoint intentionally provides dual snake_case and camelCase aliases for backward compatibility across web and API clients:
+  - `confidence_score` / `confidence`
+  - `evidence_score` / `evidenceScore`
+  - `risk_score` / `riskScore`
+  - `summary_reason` / `summaryReason`
+  - `signals[].signal_type` / `signals[].signalType`
+  - `identity` (snake_case object) / `extractedData` (camelCase object)
+- **Biometric Matching Scope & Terminology**: Facial verification performs 2D geometric feature comparison between ID photo and selfie. Active 3D liveness detection and presentation attack detection (PAD) are **unsupported and not performed** (`liveness_verified: false`, `liveness_performed: false`, `liveness_status: 'UNSUPPORTED_NOT_PERFORMED'`).
 - **Error Format**:
   All non-2xx responses adhere to the standard application error envelope:
   ```json

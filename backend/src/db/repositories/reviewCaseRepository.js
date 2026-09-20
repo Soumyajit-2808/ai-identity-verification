@@ -124,6 +124,7 @@ async function getReviewCaseById(id, organizationId = null) {
     ...row,
     extracted_identity: JSON.parse(row.extracted_identity_json || '{}'),
     signals: signalsRes.rows.map(s => ({
+      signal_type: s.signal_type,
       signalType: s.signal_type,
       status: s.status,
       score: s.score,
