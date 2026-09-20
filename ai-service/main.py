@@ -3,6 +3,18 @@ Production AI & Computer Vision Verification Service
 FastAPI application providing OCR, quality analysis, tamper risk detection, and biometric matching.
 """
 
+import sys
+import os
+
+# Ensure UTF-8 I/O encoding on Windows to prevent DeepFace UnicodeEncodeError
+os.environ["PYTHONIOENCODING"] = "utf-8"
+if sys.platform == "win32":
+    import io
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
