@@ -245,6 +245,14 @@ describe('Audit Corrections & Invariant Tests', () => {
       expect(res.body.event.require_selfie).toBe(true);
       expect(res.body.event.strict_name_matching).toBe(false);
       expect(res.body.event.allowed_id_types).toEqual(canonicalTypes);
+
+      // Revert requireSelfie policy so shared event remains clean for subsequent tests
+      await request(app)
+        .patch(`/api/events/${testEventId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          requireSelfie: false,
+        });
     });
   });
 

@@ -8,6 +8,7 @@
  * 4. Internal reviewer/admin endpoints (GET /api/verifications/:id, database) retain complete investigative evidence.
  * 5. Biometric UNAVAILABLE status routes to REVIEW and never ELIGIBLE through the public verification API.
  */
+process.env.DATABASE_URL = 'sqlite::memory:';
 
 const request = require('supertest');
 const path = require('path');

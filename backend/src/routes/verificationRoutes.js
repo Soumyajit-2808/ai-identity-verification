@@ -139,14 +139,6 @@ router.post(
         }
       }
 
-      // Check event selfie policy
-      if (event.require_selfie && !selfieFile) {
-        return res.status(400).json({
-          success: false,
-          error: 'A verification selfie is required for this event.',
-          code: 'SELFIE_REQUIRED',
-        });
-      }
 
       // 3. Secure Document Storage
       storedDoc = await saveDocument({

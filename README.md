@@ -345,9 +345,10 @@ Tests cover international date parsing, multi-strategy fuzzy name matching, Lapl
 - **Data Minimization & Salted ID Hashing**: Plaintext ID numbers are never saved in the database. Extracted document numbers are hashed using SHA-256 with a secret salt (`PII_SALT`). Only masked strings (`XXXX-XXXX-1234`) are retained for operator confirmation.
 - **Public Response Sanitization**: Public responses strip raw OCR transcripts, internal server file paths, and cross-participant registration references to prevent information leakage.
 - **Content-Addressed Storage**: Uploaded files are verified via magic-byte inspection (JPEG, PNG, WebP) and stored under SHA-256 filenames, eliminating path traversal attacks.
-- **Rate Limiting**: Multi-tiered rate limiters protect the API:
-  - Auth: 5 failed attempts per 15 minutes.
-  - Verification: 30 requests per 15 minutes per IP.
+- **Rate Limiting**: Multi-tiered rate limiters protect the API against abuse:
+  - General API: 300 requests per 15 minutes per IP (`/api/`).
+  - Auth: 20 login attempts per 15 minutes per IP (`/api/auth/login`).
+  - Verification: 30 requests per 15 minutes per IP (`/api/verify`).
 - **Auditability**: Every operator review decision, login, and document retrieval is logged in the append-only `audit_logs` table.
 
 ---

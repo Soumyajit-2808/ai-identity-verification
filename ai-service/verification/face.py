@@ -184,8 +184,6 @@ def verify_faces(
             )
 
     except Exception as err:
-        import sys
-        print(f"[Face Verification Warning] Biometric engine error: {err}", file=sys.stderr)
         return FaceVerificationResult(
             status="UNAVAILABLE",
             match=None,
