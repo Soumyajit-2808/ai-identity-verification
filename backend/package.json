@@ -10,7 +10,7 @@
 		"start": "node server.js",
 		"dev": "nodemon server.js",
 		"migrate": "node src/db/migrate.js",
-		"test": "jest --runInBand"
+		"test": "jest --runInBand --forceExit"
 	},
 	"keywords": [
 		"identity-verification",
