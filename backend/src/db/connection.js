@@ -38,6 +38,9 @@ function initDb() {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
     });
+    pool.on('error', (err) => {
+      console.error('[DB Pool Error] Unexpected error on idle client:', err);
+    });
     console.log('[DB] Connected to PostgreSQL at', config.url.split('@')[1] || 'remote host');
   } else {
     const { DatabaseSync } = require('node:sqlite');

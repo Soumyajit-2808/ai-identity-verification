@@ -64,19 +64,23 @@ async function runMigrations() {
 
   // 1. If identity_documents already exists in an older database, ensure event_id column exists before creating index on it
   try {
-    const docColsRes = isPostgres
-      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'identity_documents' AND column_name = 'event_id'`)
-      : await query(`PRAGMA table_info(identity_documents)`);
-    const tableExists = isPostgres
-      ? docColsRes.rows !== undefined
-      : docColsRes.rows && docColsRes.rows.length > 0;
-    const hasEventCol = isPostgres
-      ? docColsRes.rows && docColsRes.rows.length > 0
-      : docColsRes.rows && docColsRes.rows.some(r => r.name === 'event_id');
+    const tableCheckRes = isPostgres
+      ? await query(`SELECT table_name FROM information_schema.tables WHERE table_name = 'identity_documents'`)
+      : await query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'identity_documents'`);
+    const tableExists = tableCheckRes.rows && tableCheckRes.rows.length > 0;
 
-    if (tableExists && !hasEventCol) {
-      await query(`ALTER TABLE identity_documents ADD COLUMN event_id TEXT REFERENCES events(id) ON DELETE CASCADE`);
-      console.log('[Migration] Added missing event_id column to identity_documents.');
+    if (tableExists) {
+      const docColsRes = isPostgres
+        ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'identity_documents' AND column_name = 'event_id'`)
+        : await query(`PRAGMA table_info(identity_documents)`);
+      const hasEventCol = isPostgres
+        ? docColsRes.rows && docColsRes.rows.length > 0
+        : docColsRes.rows && docColsRes.rows.some(r => r.name === 'event_id');
+
+      if (!hasEventCol) {
+        await query(`ALTER TABLE identity_documents ADD COLUMN event_id TEXT REFERENCES events(id) ON DELETE CASCADE`);
+        console.log('[Migration] Added missing event_id column to identity_documents.');
+      }
     }
   } catch (err) {
     if (!isAlreadyExistsError(err) && !isTableNotExistsError(err)) {
@@ -86,19 +90,23 @@ async function runMigrations() {
 
   // 2. If audit_logs already exists in an older database, ensure organization_id column exists before creating index on it
   try {
-    const auditColsRes = isPostgres
-      ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'organization_id'`)
-      : await query(`PRAGMA table_info(audit_logs)`);
-    const tableExists = isPostgres
-      ? auditColsRes.rows !== undefined
-      : auditColsRes.rows && auditColsRes.rows.length > 0;
-    const hasOrgCol = isPostgres
-      ? auditColsRes.rows && auditColsRes.rows.length > 0
-      : auditColsRes.rows && auditColsRes.rows.some(r => r.name === 'organization_id');
+    const tableCheckRes = isPostgres
+      ? await query(`SELECT table_name FROM information_schema.tables WHERE table_name = 'audit_logs'`)
+      : await query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_logs'`);
+    const tableExists = tableCheckRes.rows && tableCheckRes.rows.length > 0;
 
-    if (tableExists && !hasOrgCol) {
-      await query(`ALTER TABLE audit_logs ADD COLUMN organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE`);
-      console.log('[Migration] Added missing organization_id column to audit_logs.');
+    if (tableExists) {
+      const auditColsRes = isPostgres
+        ? await query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'organization_id'`)
+        : await query(`PRAGMA table_info(audit_logs)`);
+      const hasOrgCol = isPostgres
+        ? auditColsRes.rows && auditColsRes.rows.length > 0
+        : auditColsRes.rows && auditColsRes.rows.some(r => r.name === 'organization_id');
+
+      if (!hasOrgCol) {
+        await query(`ALTER TABLE audit_logs ADD COLUMN organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE`);
+        console.log('[Migration] Added missing organization_id column to audit_logs.');
+      }
     }
   } catch (err) {
     if (!isAlreadyExistsError(err) && !isTableNotExistsError(err)) {

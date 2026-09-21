@@ -5,6 +5,8 @@ Explicitly identifies spoofing and presentation attack limitations.
 """
 
 from typing import Optional, Dict, Any, Tuple
+import os
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 import cv2
 import numpy as np
 from pydantic import BaseModel
@@ -152,7 +154,7 @@ def verify_faces(
                     reason=f"Selfie face does not sufficiently match the document photo (distance {distance:.4f} > threshold {threshold:.2f})."
                 )
 
-        except (ValueError, Exception) as val_err:
+        except ValueError as val_err:
             cause_msg = str(getattr(val_err, "__cause__", "") or "").lower()
             err_msg = (str(val_err) + " " + cause_msg).lower()
             if "img1_path" in err_msg:
@@ -177,10 +179,18 @@ def verify_faces(
                     reason="A clear human face could not be detected in either the ID document or the selfie photo."
                 )
             return FaceVerificationResult(
-                status="REVIEW",
+                status="UNAVAILABLE",
                 match=None,
-                state="DETECTION_ERROR",
-                reason=f"Face detection could not complete: {str(val_err)}"
+                state="SERVICE_ERROR",
+                reason="Biometric verification could not be completed; manual review is required."
+            )
+
+        except Exception as err:
+            return FaceVerificationResult(
+                status="UNAVAILABLE",
+                match=None,
+                state="SERVICE_ERROR",
+                reason="Biometric verification could not be completed; manual review is required."
             )
 
     except Exception as err:

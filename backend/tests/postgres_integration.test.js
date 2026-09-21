@@ -33,7 +33,10 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
     if (!pgUrl) return;
     pool = new Pool({
       connectionString: pgUrl,
-      connectionTimeoutMillis: 3000,
+      connectionTimeoutMillis: 5000,
+    });
+    pool.on('error', (err) => {
+      console.error('[Postgres Test Pool Error]', err);
     });
 
     // Test connectivity
@@ -237,56 +240,61 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
 
     const executeRegistrationTransaction = async (client, clientWrapper, regId, name, docHash) => {
       await client.query('BEGIN');
-      await client.query(
-        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, $3, 'PENDING')`,
-        [regId, testEventId, name]
-      );
+      try {
+        await client.query(
+          `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, $3, 'PENDING')`,
+          [regId, testEventId, name]
+        );
 
-      const reg = await registerIdentity(
-        {
-          eventId: testEventId,
-          registrationId: regId,
-          rawIdNumber: contestedRawId,
-          idType: 'AADHAAR',
-          registeredName: name,
-          documentFileHash: docHash,
-        },
-        clientWrapper
-      );
+        const reg = await registerIdentity(
+          {
+            eventId: testEventId,
+            registrationId: regId,
+            rawIdNumber: contestedRawId,
+            idType: 'AADHAAR',
+            registeredName: name,
+            documentFileHash: docHash,
+          },
+          clientWrapper
+        );
 
-      if (reg.registered) {
-        await client.query(
-          `UPDATE registrations SET status = 'VERIFIED' WHERE id = $1`,
-          [regId]
-        );
-      } else {
-        const revCaseId = crypto.randomUUID();
-        const verifResultId = crypto.randomUUID();
-        const verifReqId = crypto.randomUUID();
+        if (reg.registered) {
+          await client.query(
+            `UPDATE registrations SET status = 'VERIFIED' WHERE id = $1`,
+            [regId]
+          );
+        } else {
+          const revCaseId = crypto.randomUUID();
+          const verifResultId = crypto.randomUUID();
+          const verifReqId = crypto.randomUUID();
 
-        await client.query(
-          `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
-          [verifReqId, regId, testEventId]
-        );
-        await client.query(
-          `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
-           VALUES ($1, $2, $3, 'REVIEW', 0.55, 0.45)`,
-          [verifResultId, verifReqId, regId]
-        );
-        await client.query(
-          `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status)
-           VALUES ($1, $2, $3, $4, 'HIGH', 'OPEN')`,
-          [revCaseId, verifResultId, regId, testEventId]
-        );
-        await client.query(
-          `UPDATE registrations SET status = 'REVIEW_REQUIRED' WHERE id = $1`,
-          [regId]
-        );
-        reg.reviewCaseId = revCaseId;
+          await client.query(
+            `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
+            [verifReqId, regId, testEventId]
+          );
+          await client.query(
+            `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score, summary_reason, extracted_identity_json)
+             VALUES ($1, $2, $3, 'REVIEW', 0.55, 0.45, 'Concurrent identity reuse detected during race condition.', '{}')`,
+            [verifResultId, verifReqId, regId]
+          );
+          await client.query(
+            `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status)
+             VALUES ($1, $2, $3, $4, 'HIGH', 'OPEN')`,
+            [revCaseId, verifResultId, regId, testEventId]
+          );
+          await client.query(
+            `UPDATE registrations SET status = 'REVIEW_REQUIRED' WHERE id = $1`,
+            [regId]
+          );
+          reg.reviewCaseId = revCaseId;
+        }
+
+        await client.query('COMMIT');
+        return reg;
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw err;
       }
-
-      await client.query('COMMIT');
-      return reg;
     };
 
     try {
@@ -361,46 +369,51 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
 
     const executeDocTransaction = async (client, clientWrapper, regId, name, rawId) => {
       await client.query('BEGIN');
-      await client.query(
-        `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, $3, 'PENDING')`,
-        [regId, testEventId, name]
-      );
-
-      const res = await registerIdentity(
-        {
-          eventId: testEventId,
-          registrationId: regId,
-          rawIdNumber: rawId,
-          idType: 'PASSPORT',
-          registeredName: name,
-          documentFileHash: sharedDocHash,
-        },
-        clientWrapper
-      );
-
-      if (!res.registered) {
-        const revCaseId = crypto.randomUUID();
-        const verifResultId = crypto.randomUUID();
-        const verifReqId = crypto.randomUUID();
-
+      try {
         await client.query(
-          `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
-          [verifReqId, regId, testEventId]
+          `INSERT INTO registrations (id, event_id, registration_name, status) VALUES ($1, $2, $3, 'PENDING')`,
+          [regId, testEventId, name]
         );
-        await client.query(
-          `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
-           VALUES ($1, $2, $3, 'REVIEW', 0.60, 0.40)`,
-          [verifResultId, verifReqId, regId]
+
+        const res = await registerIdentity(
+          {
+            eventId: testEventId,
+            registrationId: regId,
+            rawIdNumber: rawId,
+            idType: 'PASSPORT',
+            registeredName: name,
+            documentFileHash: sharedDocHash,
+          },
+          clientWrapper
         );
-        await client.query(
-          `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status)
-           VALUES ($1, $2, $3, $4, 'HIGH', 'OPEN')`,
-          [revCaseId, verifResultId, regId, testEventId]
-        );
+
+        if (!res.registered) {
+          const revCaseId = crypto.randomUUID();
+          const verifResultId = crypto.randomUUID();
+          const verifReqId = crypto.randomUUID();
+
+          await client.query(
+            `INSERT INTO verification_requests (id, registration_id, event_id, status) VALUES ($1, $2, $3, 'COMPLETED')`,
+            [verifReqId, regId, testEventId]
+          );
+          await client.query(
+            `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score, summary_reason, extracted_identity_json)
+             VALUES ($1, $2, $3, 'REVIEW', 0.60, 0.40, 'Duplicate document file detected during race condition.', '{}')`,
+            [verifResultId, verifReqId, regId]
+          );
+          await client.query(
+            `INSERT INTO review_cases (id, result_id, registration_id, event_id, priority, status)
+             VALUES ($1, $2, $3, $4, 'HIGH', 'OPEN')`,
+            [revCaseId, verifResultId, regId, testEventId]
+          );
+        }
+
+        await client.query('COMMIT');
+        return res;
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw err;
       }
-
-      await client.query('COMMIT');
-      return res;
     };
 
     try {
@@ -451,8 +464,8 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
         [verifReqId, regId, testEventId]
       );
       await pool.query(
-        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
-         VALUES ($1, $2, $3, 'REVIEW', 0.50, 0.50)`,
+        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score, summary_reason, extracted_identity_json)
+         VALUES ($1, $2, $3, 'REVIEW', 0.50, 0.50, 'Manual operator review required for case resolution test.', '{}')`,
         [verifResultId, verifReqId, regId]
       );
       await pool.query(
@@ -567,8 +580,8 @@ describePg('PostgreSQL-Native Transaction Invariants & Recovery', () => {
         [verifReqId, regId, testEventId]
       );
       await pool.query(
-        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score)
-         VALUES ($1, $2, $3, 'REVIEW', 0.80, 0.20)`,
+        `INSERT INTO verification_results (id, request_id, registration_id, decision, confidence_score, risk_score, summary_reason, extracted_identity_json)
+         VALUES ($1, $2, $3, 'REVIEW', 0.80, 0.20, 'Initial review result awaiting administrator resolution.', '{}')`,
         [verifResultId, verifReqId, regId]
       );
       await pool.query(

@@ -8,6 +8,7 @@ import os
 
 # Ensure UTF-8 I/O encoding on Windows to prevent DeepFace UnicodeEncodeError
 os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 if sys.platform == "win32":
     import io
     if hasattr(sys.stdout, "buffer"):

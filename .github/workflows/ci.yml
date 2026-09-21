@@ -25,6 +25,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     strategy:
+      fail-fast: false
       matrix:
         node-version: [22.x, 24.x]
 
@@ -59,6 +60,7 @@ jobs:
     name: AI Verification Service Tests
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11']
 
@@ -86,6 +88,8 @@ jobs:
 
       - name: Run AI Service Test Suite
         working-directory: ./ai-service
+        env:
+          TF_USE_LEGACY_KERAS: '1'
         run: python tests/run_tests.py
 
   docker-build:
